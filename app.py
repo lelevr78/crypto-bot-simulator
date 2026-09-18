@@ -16,6 +16,7 @@ from crypto_bot.data import fetch_candles, VALID_GRANULARITIES
 from crypto_bot.feed import LiveFeed
 from crypto_bot.live_paper import LivePaperTrader
 from crypto_bot.manager import DEFAULT_WEIGHTS, ManagerAgent
+from crypto_bot.multi_asset_backtest import run_multi_asset_backtest
 from crypto_bot.portfolio import Portfolio
 
 st.set_page_config(page_title="Crypto Bot Simulator", layout="wide")
@@ -37,8 +38,12 @@ with st.sidebar:
     weights = {}
     for a in DEFAULT_AGENTS:
         weights[a.name] = st.slider(a.name, 0.0, 2.0, DEFAULT_WEIGHTS.get(a.name, 1.0), 0.1)
-    buy_th = st.slider("Soglia BUY (score combinato)", 0.0, 1.0, 0.35, 0.05)
-    sell_th = st.slider("Soglia SELL (score combinato)", -1.0, 0.0, -0.35, 0.05)
+    buy_th = st.slider("Soglia BUY (score combinato)", 0.0, 1.0, 0.35, 0.05, key="cfg_buy_th")
+    sell_th = st.slider("Soglia SELL (score combinato)", -1.0, 0.0, -0.35, 0.05, key="cfg_sell_th")
+    st.caption(
+        "Non sai che soglia scegliere? Vai su 'Validazione multi-crypto' → "
+        "'Confronto soglie' e usa il pulsante che la sceglie in automatico."
+    )
 
     st.divider()
     st.header("💰 Portafoglio virtuale")
@@ -50,8 +55,8 @@ with st.sidebar:
 
 manager = ManagerAgent(weights=weights, buy_threshold=buy_th, sell_threshold=sell_th)
 
-tab_backtest, tab_batch, tab_live = st.tabs(
-    ["📈 Backtest storico", "📊 Validazione multi-crypto", "🔴 Paper trading live"])
+tab_backtest, tab_batch, tab_auto, tab_live = st.tabs(
+    ["📈 Backtest storico", "📊 Validazione multi-crypto", "🎯 Portafoglio automatico", "🔴 Paper trading live"])
 
 # ------------------------------------------------------------------ BACKTEST
 with tab_backtest:
@@ -190,13 +195,102 @@ with tab_batch:
                                                 portfolio_kwargs=portfolio_kwargs)
 
             st.dataframe(sweep_df, use_container_width=True, hide_index=True)
-            chart_df = sweep_df.set_index("soglia")[["win_rate_pct", "return_medio_pct"]]
-            st.line_chart(chart_df, height=280)
-            st.caption(
-                "Cerca la soglia con il miglior compromesso tra win rate, return medio e un numero di "
-                "trade non troppo basso (troppo pochi trade = risultato poco affidabile). Imposta poi quella "
-                "soglia nel pannello laterale ('Soglia BUY'/'Soglia SELL') per usarla negli altri test."
-            )
+
+            if sweep_df["return_medio_pct"].notna().sum() == 0:
+                st.error(
+                    "Nessuna soglia ha prodotto un risultato utilizzabile: probabilmente il download dei dati "
+                    "è fallito per tutte le crypto selezionate (controlla la connessione o riprova più tardi)."
+                )
+            else:
+                chart_df = sweep_df.set_index("soglia")[["win_rate_pct", "return_medio_pct"]]
+                st.line_chart(chart_df, height=280)
+
+                min_trades = 10
+                usable = sweep_df[sweep_df["return_medio_pct"].notna()]
+                candidates = usable[usable["trade_chiusi"] >= min_trades]
+                if candidates.empty:
+                    candidates = usable
+                best_row = candidates.loc[candidates["return_medio_pct"].idxmax()]
+                best_th = float(best_row["soglia"])
+
+                st.success(
+                    f"🏆 Soglia migliore trovata: **{best_th:.2f}** — return medio "
+                    f"{best_row['return_medio_pct']:+.2f}%, win rate {best_row['win_rate_pct']:.1f}%, "
+                    f"{int(best_row['trade_chiusi'])} trade chiusi."
+                )
+                if st.button("✅ Applica questa soglia automaticamente"):
+                    st.session_state["cfg_buy_th"] = best_th
+                    st.session_state["cfg_sell_th"] = -best_th
+                    st.rerun()
+
+                st.caption(
+                    "La scelta automatica è basata sui dati appena testati: resta comunque un risultato storico, "
+                    "non una garanzia futura. Puoi sempre modificare la soglia a mano dal pannello laterale."
+                )
+
+# ----------------------------------------------------------- AUTO PORTFOLIO
+with tab_auto:
+    st.subheader("Un unico portafoglio, l'agente sceglie da solo la crypto migliore")
+    st.caption(
+        "A differenza del Backtest storico (una crypto alla volta) o della Validazione multi-crypto "
+        "(portafogli separati solo per fare statistica), qui c'è UN SOLO portafoglio condiviso: ad ogni "
+        "istante il team di agenti guarda tutte le crypto selezionate insieme e apre una posizione solo "
+        "su quella con il segnale più forte — tu scegli l'universo di crypto da seguire, non quale comprare."
+    )
+    auto_products = st.multiselect("Crypto tra cui l'agente può scegliere", PRODUCTS,
+                                    default=PRODUCTS, key="auto_products")
+    c1, c2 = st.columns(2)
+    with c1:
+        auto_gran = st.selectbox("Timeframe candele", VALID_GRANULARITIES,
+                                  format_func=lambda g: GRANULARITY_LABELS.get(g, f"{g}s"),
+                                  index=1, key="auto_gran")
+    with c2:
+        auto_hours = st.slider("Ore di storico", 6, 24 * 14, 72, key="auto_hours")
+
+    if st.button("▶️ Esegui backtest a portafoglio unico", type="primary"):
+        if len(auto_products) < 2:
+            st.warning("Seleziona almeno 2 crypto: con una sola non c'è scelta da fare.")
+        else:
+            with st.spinner(f"Scarico i dati di {len(auto_products)} crypto e faccio scegliere all'agente..."):
+                candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
+                portfolio = Portfolio(starting_cash=starting_cash, fee_rate=fee_pct,
+                                       max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                                       take_profit_pct=take_profit_pct)
+                try:
+                    metrics = run_multi_asset_backtest(candles_by_product, manager, portfolio)
+                except ValueError as e:
+                    st.error(str(e))
+                    metrics = None
+
+            if metrics:
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Equity finale", f"${metrics['equity']:,.2f}", f"{metrics['total_return_pct']:+.2f}%")
+                m2.metric("Trade chiusi", metrics["num_trades"])
+                m3.metric("Win rate", f"{metrics['win_rate_pct']:.1f}%")
+                m4.metric("Max drawdown", f"{metrics['max_drawdown_pct']:.2f}%")
+
+                if portfolio.equity_curve:
+                    eq_df = pd.DataFrame(portfolio.equity_curve).set_index("timestamp")
+                    st.line_chart(eq_df["equity"], height=280)
+
+                choice_log = metrics.get("choice_log", [])
+                if choice_log:
+                    st.markdown("**Quale crypto ha scelto l'agente, e quando**")
+                    choice_df = pd.DataFrame(choice_log)
+                    choice_df["alternative_scartate"] = choice_df["alternative_scartate"].apply(
+                        lambda alts: ", ".join(alts) if alts else "—")
+                    st.dataframe(choice_df, use_container_width=True, hide_index=True)
+
+                    counts = choice_df["scelta"].value_counts()
+                    st.markdown("**Quante volte è stata scelta ciascuna crypto**")
+                    st.bar_chart(counts)
+
+                if portfolio.trade_log:
+                    trades_df = pd.DataFrame(portfolio.trade_log)
+                    st.download_button("📥 Scarica trade log CSV", trades_df.to_csv(index=False),
+                                        "portafoglio_automatico_trades.csv", "text/csv")
+                else:
+                    st.info("Il team di agenti non ha trovato nessuna opportunità in questo intervallo.")
 
 # --------------------------------------------------------------- LIVE PAPER
 with tab_live:
