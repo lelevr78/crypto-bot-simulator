@@ -31,9 +31,10 @@ class LivePaperTrader:
             stop_trade = self.portfolio.check_stop_and_target(product, price, now)
 
             if len(df) < self.warmup:
-                self.last_decisions[product] = {"action": "HOLD", "score": 0.0,
-                                                 "reason": "riscaldamento indicatori in corso",
-                                                 "confidence": 0.0}
+                self.last_decisions[product] = {
+                    "action": "HOLD", "score": 0.0, "confidence": 0.0,
+                    "reason": f"riscaldamento indicatori: {len(df)}/{self.warmup} barre raccolte",
+                }
                 continue
 
             has_position = product in self.portfolio.positions
