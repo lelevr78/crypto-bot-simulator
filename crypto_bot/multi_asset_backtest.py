@@ -78,3 +78,30 @@ def run_multi_asset_backtest(candles_by_product: dict, manager: ManagerAgent, po
     metrics = portfolio.metrics(last_prices)
     metrics["choice_log"] = choice_log
     return metrics
+
+
+def run_threshold_sweep(candles_by_product: dict, thresholds: list[float],
+                         weights: dict | None = None, portfolio_kwargs: dict | None = None,
+                         warmup: int = 25) -> pd.DataFrame:
+    """Come il confronto soglie della Validazione multi-crypto, ma per il portafoglio
+    condiviso: qui il numero di trade è molto più sensibile alla soglia, perché ogni
+    istante confronta TUTTE le crypto insieme e basta che una sola superi la soglia
+    per scattare un trade — quindi serve una soglia più alta che nel test su un asset solo."""
+    rows = []
+    for th in thresholds:
+        manager = ManagerAgent(weights=weights, buy_threshold=th, sell_threshold=-th)
+        portfolio = Portfolio(**(portfolio_kwargs or {}))
+        try:
+            metrics = run_multi_asset_backtest(candles_by_product, manager, portfolio, warmup=warmup)
+            has_trades = metrics["num_trades"] > 0
+            rows.append({
+                "soglia": th,
+                "trade_chiusi": metrics["num_trades"],
+                "win_rate_pct": metrics["win_rate_pct"] if has_trades else float("nan"),
+                "return_pct": metrics["total_return_pct"] if has_trades else float("nan"),
+                "drawdown_pct": metrics["max_drawdown_pct"],
+            })
+        except ValueError:
+            rows.append({"soglia": th, "trade_chiusi": 0, "win_rate_pct": float("nan"),
+                         "return_pct": float("nan"), "drawdown_pct": float("nan")})
+    return pd.DataFrame(rows)

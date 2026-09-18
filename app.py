@@ -17,6 +17,7 @@ from crypto_bot.feed import LiveFeed
 from crypto_bot.live_paper import LivePaperTrader
 from crypto_bot.manager import DEFAULT_WEIGHTS, ManagerAgent
 from crypto_bot.multi_asset_backtest import run_multi_asset_backtest
+from crypto_bot.multi_asset_backtest import run_threshold_sweep as run_multi_asset_sweep
 from crypto_bot.portfolio import Portfolio
 
 st.set_page_config(page_title="Crypto Bot Simulator", layout="wide")
@@ -291,6 +292,55 @@ with tab_auto:
                                         "portafoglio_automatico_trades.csv", "text/csv")
                 else:
                     st.info("Il team di agenti non ha trovato nessuna opportunità in questo intervallo.")
+
+    st.divider()
+    st.subheader("🔍 Confronto soglie per il portafoglio unico")
+    st.caption(
+        "Qui la soglia va tarata a parte rispetto al Backtest storico su una crypto sola: guardando più "
+        "crypto insieme, basta che UNA superi la soglia per far scattare un trade, quindi le occasioni "
+        "(e il rumore) si moltiplicano. Di solito qui serve una soglia più alta."
+    )
+    if st.button("📈 Confronta soglie sul portafoglio unico"):
+        if len(auto_products) < 2:
+            st.warning("Seleziona almeno 2 crypto qui sopra.")
+        else:
+            with st.spinner(f"Scarico i dati una volta sola e testo 7 soglie diverse su {len(auto_products)} crypto..."):
+                candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
+                portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
+                                         max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                                         take_profit_pct=take_profit_pct)
+                thresholds = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50]
+                sweep_df = run_multi_asset_sweep(candles_by_product, thresholds, weights=weights,
+                                                  portfolio_kwargs=portfolio_kwargs)
+
+            st.dataframe(sweep_df, use_container_width=True, hide_index=True)
+
+            if sweep_df["return_pct"].notna().sum() == 0:
+                st.error(
+                    "Nessuna soglia ha prodotto un risultato utilizzabile: probabilmente il download dei "
+                    "dati è fallito per tutte le crypto selezionate."
+                )
+            else:
+                chart_df = sweep_df.set_index("soglia")[["win_rate_pct", "return_pct"]]
+                st.line_chart(chart_df, height=280)
+
+                min_trades = 10
+                usable = sweep_df[sweep_df["return_pct"].notna()]
+                candidates = usable[usable["trade_chiusi"] >= min_trades]
+                if candidates.empty:
+                    candidates = usable
+                best_row = candidates.loc[candidates["return_pct"].idxmax()]
+                best_th = float(best_row["soglia"])
+
+                st.success(
+                    f"🏆 Soglia migliore trovata: **{best_th:.2f}** — return "
+                    f"{best_row['return_pct']:+.2f}%, win rate {best_row['win_rate_pct']:.1f}%, "
+                    f"{int(best_row['trade_chiusi'])} trade chiusi."
+                )
+                if st.button("✅ Applica questa soglia automaticamente", key="apply_auto_th"):
+                    st.session_state["cfg_buy_th"] = best_th
+                    st.session_state["cfg_sell_th"] = -best_th
+                    st.rerun()
 
 # --------------------------------------------------------------- LIVE PAPER
 with tab_live:
