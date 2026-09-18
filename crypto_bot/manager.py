@@ -39,10 +39,11 @@ class ManagerAgent:
 
     def decide(self, df: pd.DataFrame, orderflow: Optional[dict] = None, has_position: bool = False) -> Decision:
         signals = [a.signal(df, orderflow) for a in self.agents]
-        weighted_sum = sum(self.weights.get(s.agent, 1.0) * s.score for s in signals)
-        weight_total = sum(self.weights.get(s.agent, 1.0) for s in signals) or 1.0
-        combined = weighted_sum / weight_total
-        agreement = 1.0 - float(np.std([s.score for s in signals])) if signals else 0.0
+        active = [s for s in signals if s.available]
+        weighted_sum = sum(self.weights.get(s.agent, 1.0) * s.score for s in active)
+        weight_total = sum(self.weights.get(s.agent, 1.0) for s in active) or 1.0
+        combined = weighted_sum / weight_total if active else 0.0
+        agreement = 1.0 - float(np.std([s.score for s in active])) if active else 0.0
         confidence = max(0.0, min(1.0, (abs(combined) * 0.7 + max(0.0, agreement) * 0.3)))
 
         vol_guard_reason = ""

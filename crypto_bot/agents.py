@@ -25,6 +25,7 @@ class Signal:
     agent: str
     score: float
     reason: str
+    available: bool = True  # False = nessun dato per questo agente (va escluso dal voto, non contato come neutro)
 
 
 def _clip(x: float) -> float:
@@ -112,7 +113,7 @@ class OrderFlowAgent(BaseAgent):
 
     def _compute(self, df, orderflow):
         if not orderflow:
-            return Signal(self.name, 0.0, "nessun dato order-flow live")
+            return Signal(self.name, 0.0, "nessun dato order-flow live (es. backtest storico)", available=False)
         buy_v = orderflow.get("buy_volume", 0.0)
         sell_v = orderflow.get("sell_volume", 0.0)
         book_imb = orderflow.get("book_imbalance", 0.0)
