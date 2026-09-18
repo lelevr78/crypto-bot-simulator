@@ -1,0 +1,21 @@
+asset,period,return%,trades,winrate%,maxDD%,BH%
+BTC-USD,Q1_2026-05-06_2026-06-20,-7.71,11,9.09,-12.48,-21.96
+BTC-USD,Q2_2026-07-05_2026-08-19,-5.06,14,28.57,-10.66,8.84
+ETH-USD,Q1_2026-05-06_2026-06-20,-18.58,17,17.65,-23.25,-26.69
+ETH-USD,Q2_2026-07-05_2026-08-19,-11.02,17,35.29,-16.11,16.98
+SOL-USD,Q1_2026-05-06_2026-06-20,-4.3,15,40.0,-15.19,-19.79
+SOL-USD,Q2_2026-07-05_2026-08-19,-7.76,15,33.33,-14.36,0.35
+
+# AGGREGATE
+# tests,6
+# total_trades,89
+# aggregated_winrate%,28.09
+# avg_return%,-9.07
+# avg_maxDD%,-15.34
+# avg_BH%,-7.05
+# all_trade_pnls_n,89
+
+# WALK_FORWARD
+# best_params,{'weights': {'momentum': 0.25, 'mean_reversion': 0.35, 'breakout': 0.2, 'order_flow': 0.2}, 'buy_threshold': 0.25, 'sell_threshold': -0.35}
+# IS,return%=15.17904247230435,trades=14,winrate%=50.0,maxDD%=-9.441683862851239,BH%=14.08142536978687
+# OOS,return%=-5.457397188198354,trades=9,winrate%=33.33333333333333,maxDD%=-16.20381179897317,BH%=-11.907903027643506
