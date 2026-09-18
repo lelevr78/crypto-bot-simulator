@@ -156,7 +156,8 @@ with tab_live:
         st.info("Premi 'AVVIA SIMULAZIONE LIVE' per iniziare a ricevere dati reali da Coinbase e far lavorare il team di agenti (nessun ordine reale).")
     else:
         running = feed.is_running()
-        status_icon = "🟢" if running else "⚪"
+        status_icons = {"connesso": "🟢", "riconnessione...": "🟡", "errore": "🔴", "fermo": "⚪"}
+        status_icon = status_icons.get(feed.status, "🟡" if running else "⚪")
         st.write(f"Stato feed: {status_icon} **{feed.status}**" + (f" — {feed.last_error}" if feed.last_error else ""))
 
         prices = trader.tick()
