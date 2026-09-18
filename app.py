@@ -1,0 +1,208 @@
+"""Crypto Bot Simulator — team di agenti + paper trading su dati Coinbase.
+
+SOLO SIMULAZIONE: nessun ordine reale viene mai inviato. Serve per testare
+la logica del team di agenti (momentum, mean-reversion, breakout, order-flow)
+e la gestione del portafoglio virtuale prima di pensare a qualunque soldo vero.
+"""
+from datetime import datetime, timedelta, timezone
+
+import pandas as pd
+import streamlit as st
+
+from crypto_bot.agents import DEFAULT_AGENTS
+from crypto_bot.backtester import run_backtest
+from crypto_bot.data import fetch_candles, VALID_GRANULARITIES
+from crypto_bot.feed import LiveFeed
+from crypto_bot.live_paper import LivePaperTrader
+from crypto_bot.manager import DEFAULT_WEIGHTS, ManagerAgent
+from crypto_bot.portfolio import Portfolio
+
+st.set_page_config(page_title="Crypto Bot Simulator", layout="wide")
+
+PRODUCTS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD", "LINK-USD", "ADA-USD", "AVAX-USD"]
+GRANULARITY_LABELS = {60: "1 minuto", 300: "5 minuti", 900: "15 minuti", 3600: "1 ora"}
+
+st.title("🤖 Crypto Bot Simulator")
+st.caption(
+    "Simulazione paper-trading (nessun ordine reale) con un team di agenti su dati pubblici Coinbase. "
+    "Nota realistica: nessun sistema può garantire di 'battere' il mercato con certezza — qui l'obiettivo "
+    "è testare in modo rigoroso se i segnali (trend, ipercomprato/ipervenduto, breakout, order-flow) "
+    "hanno un potere predittivo utile, misurando i risultati su dati reali."
+)
+
+with st.sidebar:
+    st.header("⚙️ Configurazione team di agenti")
+    st.caption("Peso di ciascun agente nel voto finale (più alto = più influenza).")
+    weights = {}
+    for a in DEFAULT_AGENTS:
+        weights[a.name] = st.slider(a.name, 0.0, 2.0, DEFAULT_WEIGHTS.get(a.name, 1.0), 0.1)
+    buy_th = st.slider("Soglia BUY (score combinato)", 0.0, 1.0, 0.35, 0.05)
+    sell_th = st.slider("Soglia SELL (score combinato)", -1.0, 0.0, -0.35, 0.05)
+
+    st.divider()
+    st.header("💰 Portafoglio virtuale")
+    starting_cash = st.number_input("Capitale iniziale ($)", 100.0, 1_000_000.0, 10_000.0, 100.0)
+    max_pos_pct = st.slider("Max % capitale per posizione", 5, 100, 20, 5) / 100
+    stop_loss_pct = st.slider("Stop-loss %", 0.5, 10.0, 1.5, 0.5) / 100
+    take_profit_pct = st.slider("Take-profit %", 0.5, 20.0, 3.0, 0.5) / 100
+    fee_pct = st.slider("Commissione per trade %", 0.0, 1.0, 0.6, 0.05) / 100
+
+manager = ManagerAgent(weights=weights, buy_threshold=buy_th, sell_threshold=sell_th)
+
+tab_backtest, tab_live = st.tabs(["📈 Backtest storico", "🔴 Paper trading live"])
+
+# ------------------------------------------------------------------ BACKTEST
+with tab_backtest:
+    st.subheader("Backtest su candele storiche reali")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        product = st.selectbox("Crypto", PRODUCTS, key="bt_product")
+    with c2:
+        granularity = st.selectbox("Timeframe candele", VALID_GRANULARITIES,
+                                    format_func=lambda g: GRANULARITY_LABELS.get(g, f"{g}s"),
+                                    index=1, key="bt_gran")
+    with c3:
+        hours = st.slider("Ore di storico", 6, 24 * 14, 48, key="bt_hours")
+
+    if st.button("▶️ Esegui backtest", type="primary"):
+        with st.spinner("Scarico candele da Coinbase ed eseguo il backtest..."):
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(hours=hours)
+            try:
+                candles = fetch_candles(product, granularity, start, end)
+            except Exception as e:
+                st.error(f"Errore nello scaricare i dati: {e}")
+                candles = pd.DataFrame()
+
+            if candles.empty or len(candles) < 30:
+                st.warning("Dati storici insufficienti per questo intervallo/timeframe.")
+            else:
+                portfolio = Portfolio(starting_cash=starting_cash, fee_rate=fee_pct,
+                                       max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                                       take_profit_pct=take_profit_pct)
+                metrics = run_backtest(candles, manager, portfolio, product)
+
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Equity finale", f"${metrics['equity']:,.2f}",
+                           f"{metrics['total_return_pct']:+.2f}%")
+                m2.metric("Trade chiusi", metrics["num_trades"])
+                m3.metric("Win rate", f"{metrics['win_rate_pct']:.1f}%")
+                m4.metric("Max drawdown", f"{metrics['max_drawdown_pct']:.2f}%")
+                buy_hold = (candles["close"].iloc[-1] / candles["close"].iloc[0] - 1) * 100
+                m5.metric("Buy & Hold", f"{buy_hold:+.2f}%")
+
+                eq_df = pd.DataFrame(portfolio.equity_curve).set_index("timestamp")
+                st.line_chart(eq_df["equity"], height=280)
+
+                st.markdown("**Prezzo e trade eseguiti**")
+                price_chart = candles[["close"]].rename(columns={"close": "prezzo"})
+                st.line_chart(price_chart, height=280)
+
+                if portfolio.trade_log:
+                    trades_df = pd.DataFrame(portfolio.trade_log)
+                    st.dataframe(trades_df, use_container_width=True, hide_index=True)
+                    st.download_button("📥 Scarica trade log CSV", trades_df.to_csv(index=False),
+                                        f"backtest_{product}_trades.csv", "text/csv")
+                else:
+                    st.info("Il team di agenti non ha generato nessun trade in questo intervallo.")
+
+# --------------------------------------------------------------- LIVE PAPER
+with tab_live:
+    st.subheader("Paper trading in tempo reale (dati live Coinbase, ordini solo simulati)")
+    live_products = st.multiselect("Crypto da seguire live", PRODUCTS, default=PRODUCTS[:4], key="live_products")
+    bar_seconds = st.select_slider("Durata barra (secondi) — più corta = reazione più rapida",
+                                    options=[5, 10, 15, 30, 60], value=15, key="live_bar_seconds")
+
+    if "live_feed" not in st.session_state:
+        st.session_state.live_feed = None
+    if "live_portfolio" not in st.session_state:
+        st.session_state.live_portfolio = None
+    if "live_trader" not in st.session_state:
+        st.session_state.live_trader = None
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        start_clicked = st.button("🟢 AVVIA SIMULAZIONE LIVE", type="primary", use_container_width=True)
+    with c2:
+        stop_clicked = st.button("🔴 FERMA", use_container_width=True)
+    with c3:
+        reset_clicked = st.button("♻️ RESET PORTAFOGLIO", use_container_width=True)
+
+    if start_clicked and live_products:
+        feed = LiveFeed(live_products, bar_seconds=bar_seconds)
+        feed.start()
+        portfolio = Portfolio(starting_cash=starting_cash, fee_rate=fee_pct,
+                               max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                               take_profit_pct=take_profit_pct)
+        st.session_state.live_feed = feed
+        st.session_state.live_portfolio = portfolio
+        st.session_state.live_trader = LivePaperTrader(feed, manager, portfolio)
+
+    if stop_clicked and st.session_state.live_feed:
+        st.session_state.live_feed.stop()
+
+    if reset_clicked and st.session_state.live_portfolio:
+        st.session_state.live_portfolio = Portfolio(
+            starting_cash=starting_cash, fee_rate=fee_pct, max_position_pct=max_pos_pct,
+            stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct)
+        if st.session_state.live_trader:
+            st.session_state.live_trader.portfolio = st.session_state.live_portfolio
+
+    feed = st.session_state.live_feed
+    trader = st.session_state.live_trader
+    portfolio = st.session_state.live_portfolio
+
+    if feed is None:
+        st.info("Premi 'AVVIA SIMULAZIONE LIVE' per iniziare a ricevere dati reali da Coinbase e far lavorare il team di agenti (nessun ordine reale).")
+    else:
+        running = feed.is_running()
+        status_icon = "🟢" if running else "⚪"
+        st.write(f"Stato feed: {status_icon} **{feed.status}**" + (f" — {feed.last_error}" if feed.last_error else ""))
+
+        prices = trader.tick()
+
+        metrics = portfolio.metrics(prices)
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Equity", f"${metrics['equity']:,.2f}", f"{metrics['total_return_pct']:+.2f}%")
+        m2.metric("Posizioni aperte", metrics["open_positions"])
+        m3.metric("Trade chiusi", metrics["num_trades"])
+        m4.metric("Win rate", f"{metrics['win_rate_pct']:.1f}%")
+        m5.metric("Cash disponibile", f"${metrics['cash']:,.2f}")
+
+        st.markdown("**🧠 Decisioni del team di agenti (ultimo tick)**")
+        rows = []
+        for p, d in trader.last_decisions.items():
+            rows.append({
+                "Crypto": p, "Prezzo": prices.get(p), "Azione": d["action"],
+                "Score": round(d.get("score", 0.0), 3),
+                "Confidenza": round(d.get("confidence", 0.0), 2),
+                "In posizione": p in portfolio.positions,
+                "Motivazione": d.get("reason", ""),
+            })
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        if portfolio.equity_curve:
+            eq_df = pd.DataFrame(portfolio.equity_curve).set_index("timestamp")
+            st.line_chart(eq_df["equity"], height=250)
+
+        if portfolio.trade_log:
+            st.markdown("**📒 Trade log**")
+            trades_df = pd.DataFrame(portfolio.trade_log)
+            st.dataframe(trades_df.tail(50), use_container_width=True, hide_index=True)
+            st.download_button("📥 Scarica trade log CSV", trades_df.to_csv(index=False),
+                                "live_paper_trades.csv", "text/csv")
+
+        if running:
+            import time
+            time.sleep(2)
+            st.rerun()
+
+st.divider()
+st.caption(
+    "⚠️ Questo strumento è puramente simulativo/educativo: nessun ordine reale viene inviato a Coinbase. "
+    "Le performance passate (anche simulate) non garantiscono risultati futuri. Prima di considerare denaro "
+    "reale servirebbero: validazione statistica su molti più dati, gestione del rischio più rigorosa e "
+    "consapevolezza che la 'latenza a frazioni di secondo' è dominata da trading firms con infrastrutture "
+    "dedicate — qui l'obiettivo realistico è reagire più in fretta usando l'order-flow, non batterle sulla latenza pura."
+)
