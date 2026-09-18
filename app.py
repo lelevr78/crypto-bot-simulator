@@ -11,7 +11,7 @@ import streamlit as st
 
 from crypto_bot.agents import DEFAULT_AGENTS
 from crypto_bot.backtester import run_backtest
-from crypto_bot.batch_backtest import run_batch
+from crypto_bot.batch_backtest import fetch_multi_candles, run_batch, run_threshold_sweep
 from crypto_bot.data import fetch_candles, VALID_GRANULARITIES
 from crypto_bot.feed import LiveFeed
 from crypto_bot.live_paper import LivePaperTrader
@@ -167,6 +167,35 @@ with tab_batch:
                 "Nota: questo resta un backtest su dati storici recenti, non una garanzia sul futuro. "
                 "Un win rate alto ottenuto tarando pesi/soglie proprio su questi stessi dati è un segnale "
                 "di overfitting, non di un vero vantaggio — va sempre riverificato su dati nuovi (out-of-sample)."
+            )
+
+    st.divider()
+    st.subheader("🔍 Confronto soglie (trova il punto di equilibrio)")
+    st.caption(
+        "Soglia troppo alta → il bot non fa mai trade (troppo prudente). Soglia troppo bassa → "
+        "fa trade su segnali deboli/rumore, pagando commissioni e stop-loss frequenti (overtrading). "
+        "Qui gli STESSI dati storici vengono testati con più soglie diverse, per vedere dove sta il compromesso."
+    )
+    if st.button("📈 Confronta soglie su questi dati"):
+        if not batch_products:
+            st.warning("Seleziona almeno una crypto qui sopra.")
+        else:
+            with st.spinner(f"Scarico i dati una volta sola e testo 7 soglie diverse su {len(batch_products)} crypto..."):
+                candles_by_product = fetch_multi_candles(batch_products, batch_gran, batch_hours)
+                portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
+                                         max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                                         take_profit_pct=take_profit_pct)
+                thresholds = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
+                sweep_df = run_threshold_sweep(candles_by_product, thresholds, weights=weights,
+                                                portfolio_kwargs=portfolio_kwargs)
+
+            st.dataframe(sweep_df, use_container_width=True, hide_index=True)
+            chart_df = sweep_df.set_index("soglia")[["win_rate_pct", "return_medio_pct"]]
+            st.line_chart(chart_df, height=280)
+            st.caption(
+                "Cerca la soglia con il miglior compromesso tra win rate, return medio e un numero di "
+                "trade non troppo basso (troppo pochi trade = risultato poco affidabile). Imposta poi quella "
+                "soglia nel pannello laterale ('Soglia BUY'/'Soglia SELL') per usarla negli altri test."
             )
 
 # --------------------------------------------------------------- LIVE PAPER
