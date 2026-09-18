@@ -11,6 +11,7 @@ import streamlit as st
 
 from crypto_bot.agents import DEFAULT_AGENTS
 from crypto_bot.backtester import run_backtest
+from crypto_bot.batch_backtest import run_batch
 from crypto_bot.data import fetch_candles, VALID_GRANULARITIES
 from crypto_bot.feed import LiveFeed
 from crypto_bot.live_paper import LivePaperTrader
@@ -49,7 +50,8 @@ with st.sidebar:
 
 manager = ManagerAgent(weights=weights, buy_threshold=buy_th, sell_threshold=sell_th)
 
-tab_backtest, tab_live = st.tabs(["📈 Backtest storico", "🔴 Paper trading live"])
+tab_backtest, tab_batch, tab_live = st.tabs(
+    ["📈 Backtest storico", "📊 Validazione multi-crypto", "🔴 Paper trading live"])
 
 # ------------------------------------------------------------------ BACKTEST
 with tab_backtest:
@@ -105,6 +107,67 @@ with tab_backtest:
                                         f"backtest_{product}_trades.csv", "text/csv")
                 else:
                     st.info("Il team di agenti non ha generato nessun trade in questo intervallo.")
+
+# ------------------------------------------------------------- BATCH BACKTEST
+with tab_batch:
+    st.subheader("Validazione statistica su più crypto")
+    st.caption(
+        "Un solo backtest su un solo asset/periodo può ingannare (fortuna o overfitting). "
+        "Qui il team di agenti viene testato con LE STESSE regole su più crypto insieme: "
+        "il win rate aggregato è un numero molto più affidabile di quello di un test singolo."
+    )
+    batch_products = st.multiselect("Crypto da testare", PRODUCTS, default=PRODUCTS, key="batch_products")
+    c1, c2 = st.columns(2)
+    with c1:
+        batch_gran = st.selectbox("Timeframe candele", VALID_GRANULARITIES,
+                                   format_func=lambda g: GRANULARITY_LABELS.get(g, f"{g}s"),
+                                   index=1, key="batch_gran")
+    with c2:
+        batch_hours = st.slider("Ore di storico per ogni crypto", 6, 24 * 14, 72, key="batch_hours")
+
+    if st.button("▶️ Esegui validazione multi-crypto", type="primary"):
+        if not batch_products:
+            st.warning("Seleziona almeno una crypto.")
+        else:
+            with st.spinner(f"Backtest su {len(batch_products)} crypto in corso..."):
+                portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
+                                         max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                                         take_profit_pct=take_profit_pct)
+                manager_kwargs = dict(weights=weights, buy_threshold=buy_th, sell_threshold=sell_th)
+                results, trades_df, summary = run_batch(
+                    batch_products, batch_gran, batch_hours,
+                    manager_kwargs=manager_kwargs, portfolio_kwargs=portfolio_kwargs)
+
+            def fmt_pct(x, sign=False):
+                if x is None or x != x:  # NaN check
+                    return "n/d"
+                return f"{x:+.2f}%" if sign else f"{x:.1f}%"
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Trade chiusi totali", summary["total_closed_trades"])
+            m2.metric("Win rate aggregato", fmt_pct(summary["overall_win_rate_pct"]))
+            m3.metric("Return medio per crypto", fmt_pct(summary["avg_return_pct"], sign=True))
+            m4.metric("Buy & Hold medio", fmt_pct(summary["avg_buy_hold_pct"], sign=True))
+
+            if summary["total_closed_trades"] < 30:
+                st.warning(
+                    f"Solo {summary['total_closed_trades']} trade chiusi in questo test: campione troppo "
+                    "piccolo per fidarsi del win rate. Allunga il periodo di storico o aggiungi più crypto "
+                    "prima di trarre conclusioni."
+                )
+
+            st.markdown("**Risultati per crypto**")
+            st.dataframe(results, use_container_width=True, hide_index=True)
+
+            if not trades_df.empty:
+                st.download_button("📥 Scarica tutti i trade CSV", trades_df.to_csv(index=False),
+                                    "batch_backtest_trades.csv", "text/csv")
+
+            st.caption(
+                "Nota: questo resta un backtest su dati storici recenti, non una garanzia sul futuro. "
+                "Un win rate alto ottenuto tarando pesi/soglie proprio su questi stessi dati è un segnale "
+                "di overfitting, non di un vero vantaggio — va sempre riverificato su dati nuovi (out-of-sample)."
+            )
 
 # --------------------------------------------------------------- LIVE PAPER
 with tab_live:
