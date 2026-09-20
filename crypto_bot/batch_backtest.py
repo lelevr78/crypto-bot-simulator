@@ -3,6 +3,7 @@ agenti in modo statisticamente più solido di un singolo test su un asset
 e un periodo soli (che può ingannare per pura fortuna/overfitting)."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -14,16 +15,24 @@ from .portfolio import Portfolio
 
 
 def fetch_multi_candles(products: list[str], granularity: int, hours: int) -> dict:
-    """Scarica le candele una sola volta per prodotto, da riusare in più backtest
-    (es. per confrontare diverse soglie senza rifare le stesse richieste di rete)."""
+    """Scarica le candele una sola volta per prodotto (in parallelo, così periodi
+    lunghi o molte crypto non richiedono di aspettare un prodotto alla volta), da
+    riusare in più backtest senza rifare le stesse richieste di rete. Il limite di
+    frequenza verso l'API di Coinbase resta rispettato perché è condiviso tra thread
+    (vedi crypto_bot/data.py)."""
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=hours)
-    out = {}
-    for product in products:
+
+    def _fetch(product):
         try:
-            out[product] = fetch_candles(product, granularity, start, end)
+            return product, fetch_candles(product, granularity, start, end)
         except Exception as e:
-            out[product] = e
+            return product, e
+
+    out = {}
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(products)))) as executor:
+        for product, result in executor.map(_fetch, products):
+            out[product] = result
     return out
 
 
