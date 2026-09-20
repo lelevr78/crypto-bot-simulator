@@ -53,6 +53,12 @@ with st.sidebar:
     stop_loss_pct = st.slider("Stop-loss %", 0.5, 10.0, 1.5, 0.5) / 100
     take_profit_pct = st.slider("Take-profit %", 0.5, 20.0, 3.0, 0.5) / 100
     fee_pct = st.slider("Commissione per trade %", 0.0, 1.0, 0.6, 0.05) / 100
+    min_hold_minutes = st.slider(
+        "Holding minimo prima di uscire per segnale (minuti)", 0, 360, 60, 15,
+        help="Lo stop-loss e il take-profit restano SEMPRE immediati. Questo vincolo si applica "
+             "solo alle uscite decise dagli agenti, per evitare trade-lampo la cui commissione "
+             "supera il guadagno atteso. 0 = nessun vincolo (comportamento precedente)."
+    )
 
 manager = ManagerAgent(weights=weights, buy_threshold=buy_th, sell_threshold=sell_th)
 
@@ -87,7 +93,7 @@ with tab_backtest:
             else:
                 portfolio = Portfolio(starting_cash=starting_cash, fee_rate=fee_pct,
                                        max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
-                                       take_profit_pct=take_profit_pct)
+                                       take_profit_pct=take_profit_pct, min_hold_minutes=min_hold_minutes)
                 metrics = run_backtest(candles, manager, portfolio, product)
 
                 m1, m2, m3, m4, m5 = st.columns(5)
@@ -138,7 +144,7 @@ with tab_batch:
             with st.spinner(f"Backtest su {len(batch_products)} crypto in corso..."):
                 portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
                                          max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
-                                         take_profit_pct=take_profit_pct)
+                                         take_profit_pct=take_profit_pct, min_hold_minutes=min_hold_minutes)
                 manager_kwargs = dict(weights=weights, buy_threshold=buy_th, sell_threshold=sell_th)
                 results, trades_df, summary = run_batch(
                     batch_products, batch_gran, batch_hours,
@@ -190,7 +196,7 @@ with tab_batch:
                 candles_by_product = fetch_multi_candles(batch_products, batch_gran, batch_hours)
                 portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
                                          max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
-                                         take_profit_pct=take_profit_pct)
+                                         take_profit_pct=take_profit_pct, min_hold_minutes=min_hold_minutes)
                 thresholds = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40]
                 sweep_df = run_threshold_sweep(candles_by_product, thresholds, weights=weights,
                                                 portfolio_kwargs=portfolio_kwargs)
@@ -256,7 +262,7 @@ with tab_auto:
                 candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
                 portfolio = Portfolio(starting_cash=starting_cash, fee_rate=fee_pct,
                                        max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
-                                       take_profit_pct=take_profit_pct)
+                                       take_profit_pct=take_profit_pct, min_hold_minutes=min_hold_minutes)
                 try:
                     metrics = run_multi_asset_backtest(candles_by_product, manager, portfolio)
                 except ValueError as e:
@@ -308,7 +314,7 @@ with tab_auto:
                 candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
                 portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
                                          max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
-                                         take_profit_pct=take_profit_pct)
+                                         take_profit_pct=take_profit_pct, min_hold_minutes=min_hold_minutes)
                 thresholds = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50]
                 sweep_df = run_multi_asset_sweep(candles_by_product, thresholds, weights=weights,
                                                   portfolio_kwargs=portfolio_kwargs)
@@ -369,7 +375,7 @@ with tab_live:
         feed.start()
         portfolio = Portfolio(starting_cash=starting_cash, fee_rate=fee_pct,
                                max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
-                               take_profit_pct=take_profit_pct)
+                               take_profit_pct=take_profit_pct, min_hold_minutes=min_hold_minutes)
         st.session_state.live_feed = feed
         st.session_state.live_portfolio = portfolio
         st.session_state.live_trader = LivePaperTrader(feed, manager, portfolio)
@@ -380,7 +386,8 @@ with tab_live:
     if reset_clicked and st.session_state.live_portfolio:
         st.session_state.live_portfolio = Portfolio(
             starting_cash=starting_cash, fee_rate=fee_pct, max_position_pct=max_pos_pct,
-            stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct)
+            stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
+            min_hold_minutes=min_hold_minutes)
         if st.session_state.live_trader:
             st.session_state.live_trader.portfolio = st.session_state.live_portfolio
 

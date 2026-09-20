@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Optional
 
 import numpy as np
@@ -12,6 +13,7 @@ import pandas as pd
 class Position:
     qty: float
     avg_price: float
+    entry_ts: object = None
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
 
@@ -19,13 +21,18 @@ class Position:
 class Portfolio:
     def __init__(self, starting_cash: float = 10_000.0, fee_rate: float = 0.006,
                  max_position_pct: float = 0.20, stop_loss_pct: float = 0.015,
-                 take_profit_pct: float = 0.03):
+                 take_profit_pct: float = 0.03, min_hold_minutes: float = 0.0):
         self.starting_cash = starting_cash
         self.cash = starting_cash
         self.fee_rate = fee_rate
         self.max_position_pct = max_position_pct
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
+        # Tempo minimo prima che un segnale degli agenti possa chiudere una posizione:
+        # evita trade-lampo (poche decine di minuti) le cui commissioni superano il
+        # piccolo guadagno atteso. Stop-loss/take-profit restano SEMPRE immediati,
+        # perché sono controlli di rischio, non decisioni di opportunità.
+        self.min_hold_minutes = min_hold_minutes
         self.positions: dict[str, Position] = {}
         self.trade_log: list[dict] = []
         self.equity_curve: list[dict] = []
@@ -52,7 +59,7 @@ class Portfolio:
             return None
         self.cash -= budget
         self.positions[product] = Position(
-            qty=qty, avg_price=price,
+            qty=qty, avg_price=price, entry_ts=timestamp,
             stop_loss=price * (1 - self.stop_loss_pct),
             take_profit=price * (1 + self.take_profit_pct),
         )
@@ -88,6 +95,21 @@ class Portfolio:
         if pos.take_profit and price >= pos.take_profit:
             return self.sell(product, price, timestamp, reason="take-profit")
         return None
+
+    def held_long_enough(self, product: str, timestamp) -> bool:
+        """True se la posizione può essere chiusa per segnale degli agenti (non per
+        stop-loss/take-profit, che ignorano questo vincolo). Con min_hold_minutes=0
+        (default) non c'è nessun vincolo, comportamento identico a prima."""
+        if self.min_hold_minutes <= 0:
+            return True
+        pos = self.positions.get(product)
+        if pos is None or pos.entry_ts is None:
+            return True
+        try:
+            elapsed = (timestamp - pos.entry_ts).total_seconds() / 60.0
+        except TypeError:
+            return True
+        return elapsed >= self.min_hold_minutes
 
     def record_equity(self, timestamp, prices: dict[str, float]):
         self.equity_curve.append({"timestamp": timestamp, "equity": self.equity(prices)})

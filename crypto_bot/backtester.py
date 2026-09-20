@@ -25,7 +25,7 @@ def run_backtest(candles: pd.DataFrame, manager: ManagerAgent, portfolio: Portfo
 
         if decision.action == "BUY" and not has_position:
             portfolio.buy(product, price, ts, reason=decision.reason)
-        elif decision.action == "SELL" and has_position:
+        elif decision.action == "SELL" and has_position and portfolio.held_long_enough(product, ts):
             portfolio.sell(product, price, ts, reason=decision.reason)
 
         portfolio.record_equity(ts, {product: price})

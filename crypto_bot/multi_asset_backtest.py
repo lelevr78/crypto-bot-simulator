@@ -52,7 +52,7 @@ def run_multi_asset_backtest(candles_by_product: dict, manager: ManagerAgent, po
             has_position = product in portfolio.positions
             decision = manager.decide(window, orderflow=None, has_position=has_position)
 
-            if decision.action == "SELL" and has_position:
+            if decision.action == "SELL" and has_position and portfolio.held_long_enough(product, ts):
                 portfolio.sell(product, price, ts, reason=decision.reason)
             elif decision.action == "BUY" and not has_position:
                 candidates.append((decision.score, product, price, decision.reason))

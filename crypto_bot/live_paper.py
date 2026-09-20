@@ -45,7 +45,7 @@ class LivePaperTrader:
                 executed = stop_trade
             elif decision.action == "BUY" and not has_position:
                 executed = self.portfolio.buy(product, price, now, reason=decision.reason)
-            elif decision.action == "SELL" and has_position:
+            elif decision.action == "SELL" and has_position and self.portfolio.held_long_enough(product, now):
                 executed = self.portfolio.sell(product, price, now, reason=decision.reason)
 
             self.last_decisions[product] = {
