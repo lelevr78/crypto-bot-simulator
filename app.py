@@ -54,7 +54,7 @@ with st.sidebar:
     take_profit_pct = st.slider("Take-profit %", 0.5, 20.0, 3.0, 0.5) / 100
     fee_pct = st.slider("Commissione per trade %", 0.0, 1.0, 0.6, 0.05) / 100
     min_hold_minutes = st.slider(
-        "Holding minimo prima di uscire per segnale (minuti)", 0, 360, 60, 15,
+        "Holding minimo prima di uscire per segnale (minuti)", 0, 1440, 60, 15,
         help="Lo stop-loss e il take-profit restano SEMPRE immediati. Questo vincolo si applica "
              "solo alle uscite decise dagli agenti, per evitare trade-lampo la cui commissione "
              "supera il guadagno atteso. 0 = nessun vincolo (comportamento precedente)."
