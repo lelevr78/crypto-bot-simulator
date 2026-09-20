@@ -76,7 +76,7 @@ with tab_backtest:
                                     format_func=lambda g: GRANULARITY_LABELS.get(g, f"{g}s"),
                                     index=1, key="bt_gran")
     with c3:
-        hours = st.slider("Ore di storico", 6, 24 * 14, 48, key="bt_hours")
+        hours = st.slider("Ore di storico", 6, 24 * 180, 48, key="bt_hours")
 
     if st.button("▶️ Esegui backtest", type="primary"):
         with st.spinner("Scarico candele da Coinbase ed eseguo il backtest..."):
@@ -135,7 +135,7 @@ with tab_batch:
                                    format_func=lambda g: GRANULARITY_LABELS.get(g, f"{g}s"),
                                    index=1, key="batch_gran")
     with c2:
-        batch_hours = st.slider("Ore di storico per ogni crypto", 6, 24 * 14, 72, key="batch_hours")
+        batch_hours = st.slider("Ore di storico per ogni crypto", 6, 24 * 180, 72, key="batch_hours")
 
     if st.button("▶️ Esegui validazione multi-crypto", type="primary"):
         if not batch_products:
@@ -252,7 +252,7 @@ with tab_auto:
                                   format_func=lambda g: GRANULARITY_LABELS.get(g, f"{g}s"),
                                   index=1, key="auto_gran")
     with c2:
-        auto_hours = st.slider("Ore di storico", 6, 24 * 14, 72, key="auto_hours")
+        auto_hours = st.slider("Ore di storico", 6, 24 * 180, 72, key="auto_hours")
 
     if st.button("▶️ Esegui backtest a portafoglio unico", type="primary"):
         if len(auto_products) < 2:
