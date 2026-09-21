@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from crypto_bot.agents import DEFAULT_AGENTS
 from crypto_bot.backtester import run_backtest
@@ -24,6 +25,27 @@ st.set_page_config(page_title="Crypto Bot Simulator", layout="wide")
 
 PRODUCTS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD", "LINK-USD", "ADA-USD", "AVAX-USD"]
 GRANULARITY_LABELS = {60: "1 minuto", 300: "5 minuti", 900: "15 minuti", 3600: "1 ora"}
+
+
+def keep_screen_awake():
+    """Impedisce allo schermo del telefono di bloccarsi durante un download lungo
+    (Screen Wake Lock API — supportata da Safari iOS 16.4+ e dai browser Android
+    recenti). Se il browser non la supporta, non succede nulla di rotto: il
+    download prosegue comunque, semplicemente lo schermo potrà bloccarsi come prima."""
+    components.html(
+        """
+        <script>
+        (async () => {
+            try {
+                if ('wakeLock' in navigator) {
+                    await navigator.wakeLock.request('screen');
+                }
+            } catch (e) {}
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 st.title("🤖 Crypto Bot Simulator")
 st.caption(
@@ -80,6 +102,7 @@ with tab_backtest:
 
     if st.button("▶️ Esegui backtest", type="primary"):
         with st.spinner("Scarico candele da Coinbase ed eseguo il backtest..."):
+            keep_screen_awake()
             end = datetime.now(timezone.utc)
             start = end - timedelta(hours=hours)
             try:
@@ -142,6 +165,7 @@ with tab_batch:
             st.warning("Seleziona almeno una crypto.")
         else:
             with st.spinner(f"Backtest su {len(batch_products)} crypto in corso..."):
+                keep_screen_awake()
                 portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
                                          max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
                                          take_profit_pct=take_profit_pct, min_hold_minutes=min_hold_minutes)
@@ -193,6 +217,7 @@ with tab_batch:
             st.warning("Seleziona almeno una crypto qui sopra.")
         else:
             with st.spinner(f"Scarico i dati una volta sola e testo 7 soglie diverse su {len(batch_products)} crypto..."):
+                keep_screen_awake()
                 candles_by_product = fetch_multi_candles(batch_products, batch_gran, batch_hours)
                 portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
                                          max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
@@ -259,6 +284,7 @@ with tab_auto:
             st.warning("Seleziona almeno 2 crypto: con una sola non c'è scelta da fare.")
         else:
             with st.spinner(f"Scarico i dati di {len(auto_products)} crypto e faccio scegliere all'agente..."):
+                keep_screen_awake()
                 candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
                 portfolio = Portfolio(starting_cash=starting_cash, fee_rate=fee_pct,
                                        max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
@@ -311,6 +337,7 @@ with tab_auto:
             st.warning("Seleziona almeno 2 crypto qui sopra.")
         else:
             with st.spinner(f"Scarico i dati una volta sola e testo 7 soglie diverse su {len(auto_products)} crypto..."):
+                keep_screen_awake()
                 candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
                 portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
                                          max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
