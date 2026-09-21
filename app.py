@@ -17,7 +17,7 @@ from crypto_bot.data import fetch_candles, VALID_GRANULARITIES
 from crypto_bot.feed import LiveFeed
 from crypto_bot.live_paper import LivePaperTrader
 from crypto_bot.manager import DEFAULT_WEIGHTS, ManagerAgent
-from crypto_bot.multi_asset_backtest import run_multi_asset_backtest
+from crypto_bot.multi_asset_backtest import run_multi_asset_backtest, run_walk_forward
 from crypto_bot.multi_asset_backtest import run_threshold_sweep as run_multi_asset_sweep
 from crypto_bot.portfolio import Portfolio
 
@@ -374,6 +374,88 @@ with tab_auto:
                     st.session_state["cfg_buy_th"] = best_th
                     st.session_state["cfg_sell_th"] = -best_th
                     st.rerun()
+
+    st.divider()
+    st.subheader("🔬 Walk-forward (taratura + verifica separate)")
+    st.caption(
+        "Il test più rigoroso contro l'overfitting: la soglia e l'holding minimo vengono scelti "
+        "SOLO guardando la prima parte dello storico (in-sample). Il risultato finale che conta è "
+        "quello sulla parte successiva, mai vista durante la taratura (out-of-sample) — se regge "
+        "vicino ai numeri dell'in-sample è un segnale vero, se crolla era solo rumore tarato bene."
+    )
+    split_pct = st.select_slider("Percentuale dati per la taratura (in-sample)",
+                                  options=[50, 60, 70], value=60, key="wf_split_pct")
+    if st.button("🔬 Esegui walk-forward"):
+        if len(auto_products) < 2:
+            st.warning("Seleziona almeno 2 crypto qui sopra.")
+        else:
+            with st.spinner(f"Scarico i dati una volta sola, taro su {split_pct}% dello storico "
+                             f"e verifico sul resto..."):
+                keep_screen_awake()
+                candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
+                portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
+                                         max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                                         take_profit_pct=take_profit_pct)
+                thresholds = [0.15, 0.20, 0.25, 0.30, 0.35]
+                min_holds = [240, 480, 720, 1440]
+                try:
+                    wf = run_walk_forward(candles_by_product, thresholds, min_holds, weights=weights,
+                                           portfolio_kwargs=portfolio_kwargs, split_ratio=split_pct / 100)
+                except ValueError as e:
+                    st.error(str(e))
+                    wf = None
+
+            if wf:
+                st.info(
+                    f"Combinazione scelta sull'in-sample: soglia **{wf['best_threshold']:.2f}**, "
+                    f"holding minimo **{int(wf['best_min_hold'])} min**. Punto di taglio: "
+                    f"{wf['split_timestamp']}."
+                )
+
+                is_m, oos_m = wf["is_metrics"], wf["oos_metrics"]
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**In-sample (taratura)**")
+                    st.metric("Return", f"{is_m['return_pct']:+.2f}%")
+                    st.metric("Win rate", f"{is_m['win_rate_pct']:.1f}%")
+                    st.metric("Trade", int(is_m["trade"]))
+                    st.metric("Max drawdown", f"{is_m['drawdown_pct']:.2f}%")
+                with c2:
+                    st.markdown("**Out-of-sample (verifica, mai vista prima)**")
+                    st.metric("Return", f"{oos_m['total_return_pct']:+.2f}%")
+                    st.metric("Win rate", f"{oos_m['win_rate_pct']:.1f}%")
+                    st.metric("Trade", oos_m["num_trades"])
+                    st.metric("Max drawdown", f"{oos_m['max_drawdown_pct']:.2f}%")
+
+                if oos_m["num_trades"] < 15:
+                    st.warning(
+                        f"Solo {oos_m['num_trades']} trade nella parte out-of-sample: campione piccolo, "
+                        "risultato da prendere con cautela. Allunga 'Ore di storico' se possibile."
+                    )
+                elif oos_m["total_return_pct"] >= is_m["return_pct"] * 0.5 and oos_m["total_return_pct"] > 0:
+                    st.success(
+                        "Il risultato regge bene anche sui dati mai visti: è un segnale più solido, "
+                        "non solo una taratura riuscita per caso sull'in-sample."
+                    )
+                elif oos_m["total_return_pct"] <= 0 < is_m["return_pct"]:
+                    st.warning(
+                        "L'in-sample era positivo ma l'out-of-sample no: probabile segnale di overfitting "
+                        "— i parametri erano tarati sul rumore di quel periodo specifico, non su un vero pattern."
+                    )
+
+                oos_portfolio = wf["oos_portfolio"]
+                if oos_portfolio.equity_curve:
+                    eq_df = pd.DataFrame(oos_portfolio.equity_curve).set_index("timestamp")
+                    st.markdown("**Curva equity out-of-sample**")
+                    st.line_chart(eq_df["equity"], height=250)
+
+                with st.expander("Griglia completa (tutte le combinazioni testate in-sample)"):
+                    st.dataframe(wf["grid"], use_container_width=True, hide_index=True)
+
+                if oos_portfolio.trade_log:
+                    trades_df = pd.DataFrame(oos_portfolio.trade_log)
+                    st.download_button("📥 Scarica trade log out-of-sample CSV", trades_df.to_csv(index=False),
+                                        "walk_forward_oos_trades.csv", "text/csv")
 
 # --------------------------------------------------------------- LIVE PAPER
 with tab_live:

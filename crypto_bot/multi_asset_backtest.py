@@ -105,3 +105,81 @@ def run_threshold_sweep(candles_by_product: dict, thresholds: list[float],
             rows.append({"soglia": th, "trade_chiusi": 0, "win_rate_pct": float("nan"),
                          "return_pct": float("nan"), "drawdown_pct": float("nan")})
     return pd.DataFrame(rows)
+
+
+def split_walk_forward(candles_by_product: dict, split_ratio: float = 0.6, warmup: int = 25):
+    """Divide lo storico allineato in due blocchi cronologici SENZA sovrapposizioni:
+    in-sample (per tarare i parametri) e out-of-sample (per verificarli su dati mai
+    visti durante la taratura). Questo è il test vero contro l'overfitting."""
+    aligned = align_candles(candles_by_product)
+    if not aligned:
+        raise ValueError("Nessun timestamp in comune tra le crypto selezionate (o dati mancanti).")
+
+    timeline = next(iter(aligned.values())).index
+    split_idx = int(len(timeline) * split_ratio)
+    min_len = warmup + 10
+    if split_idx < min_len or (len(timeline) - split_idx) < min_len:
+        raise ValueError(
+            "Serie storica troppo corta per dividerla in due blocchi affidabili: "
+            "allunga 'Ore di storico' o riduci la percentuale in-sample."
+        )
+
+    split_ts = timeline[split_idx]
+    is_candles = {p: c.iloc[:split_idx] for p, c in aligned.items()}
+    oos_candles = {p: c.iloc[split_idx:] for p, c in aligned.items()}
+    return is_candles, oos_candles, split_ts
+
+
+def run_walk_forward(candles_by_product: dict, thresholds: list[float], min_holds: list[float],
+                      weights: dict | None = None, portfolio_kwargs: dict | None = None,
+                      split_ratio: float = 0.6, warmup: int = 25, min_is_trades: int = 15) -> dict:
+    """Vera validazione out-of-sample: prova una griglia di soglie/holding minimo
+    SOLO sulla prima parte dello storico (in-sample), sceglie la combinazione
+    migliore, poi la testa UNA SOLA VOLTA sulla parte successiva mai vista
+    (out-of-sample) senza più toccare nulla. Se il risultato out-of-sample regge
+    (non crolla rispetto all'in-sample), è un segnale reale; se crolla, i parametri
+    erano tarati sul rumore di quel periodo specifico (overfitting)."""
+    is_candles, oos_candles, split_ts = split_walk_forward(candles_by_product, split_ratio, warmup)
+
+    grid_rows = []
+    for th in thresholds:
+        for mh in min_holds:
+            manager = ManagerAgent(weights=weights, buy_threshold=th, sell_threshold=-th)
+            pf_kwargs = dict(portfolio_kwargs or {})
+            pf_kwargs["min_hold_minutes"] = mh
+            portfolio = Portfolio(**pf_kwargs)
+            try:
+                metrics = run_multi_asset_backtest(is_candles, manager, portfolio, warmup=warmup)
+            except ValueError:
+                continue
+            grid_rows.append({
+                "soglia": th, "holding_min": mh, "trade": metrics["num_trades"],
+                "return_pct": metrics["total_return_pct"], "win_rate_pct": metrics["win_rate_pct"],
+                "drawdown_pct": metrics["max_drawdown_pct"],
+            })
+
+    grid_df = pd.DataFrame(grid_rows)
+    if grid_df.empty:
+        raise ValueError("Nessuna combinazione soglia/holding ha prodotto un risultato valido sull'in-sample.")
+
+    candidates = grid_df[grid_df["trade"] >= min_is_trades]
+    if candidates.empty:
+        candidates = grid_df
+    best = candidates.loc[candidates["return_pct"].idxmax()]
+
+    best_th, best_mh = float(best["soglia"]), float(best["holding_min"])
+    manager_oos = ManagerAgent(weights=weights, buy_threshold=best_th, sell_threshold=-best_th)
+    pf_kwargs_oos = dict(portfolio_kwargs or {})
+    pf_kwargs_oos["min_hold_minutes"] = best_mh
+    portfolio_oos = Portfolio(**pf_kwargs_oos)
+    oos_metrics = run_multi_asset_backtest(oos_candles, manager_oos, portfolio_oos, warmup=warmup)
+
+    return {
+        "grid": grid_df,
+        "best_threshold": best_th,
+        "best_min_hold": best_mh,
+        "is_metrics": best.to_dict(),
+        "oos_metrics": oos_metrics,
+        "oos_portfolio": portfolio_oos,
+        "split_timestamp": split_ts,
+    }
