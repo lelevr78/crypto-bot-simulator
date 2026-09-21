@@ -529,6 +529,18 @@ with tab_live:
     trader = st.session_state.live_trader
     portfolio = st.session_state.live_portfolio
 
+    if trader is not None:
+        # Il pannello laterale (soglie, pesi, stop-loss...) può cambiare mentre la
+        # simulazione live è già in corso: senza questo, il motore avviato con
+        # "AVVIA" continuerebbe silenziosamente a usare le impostazioni di quel
+        # momento, ignorando ogni modifica successiva agli slider.
+        trader.manager = manager
+        portfolio.min_hold_minutes = min_hold_minutes
+        portfolio.stop_loss_pct = stop_loss_pct
+        portfolio.take_profit_pct = take_profit_pct
+        portfolio.fee_rate = fee_pct
+        portfolio.max_position_pct = max_pos_pct
+
     if feed is None:
         st.info("Premi 'AVVIA SIMULAZIONE LIVE' per iniziare a ricevere dati reali da Coinbase e far lavorare il team di agenti (nessun ordine reale).")
     else:
