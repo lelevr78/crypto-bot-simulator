@@ -11,6 +11,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from crypto_bot.agents import DEFAULT_AGENTS
+from crypto_bot.auto_recalibration import recalibrate
 from crypto_bot.backtester import run_backtest
 from crypto_bot.batch_backtest import fetch_multi_candles, run_batch, run_threshold_sweep
 from crypto_bot.data import fetch_candles, VALID_GRANULARITIES
@@ -77,6 +78,7 @@ with st.sidebar:
     fee_pct = st.slider("Commissione per trade %", 0.0, 1.0, 0.6, 0.05) / 100
     min_hold_minutes = st.slider(
         "Holding minimo prima di uscire per segnale (minuti)", 0, 1440, 60, 15,
+        key="cfg_min_hold",
         help="Lo stop-loss e il take-profit restano SEMPRE immediati. Questo vincolo si applica "
              "solo alle uscite decise dagli agenti, per evitare trade-lampo la cui commissione "
              "supera il guadagno atteso. 0 = nessun vincolo (comportamento precedente)."
@@ -489,12 +491,27 @@ with tab_live:
     bar_seconds = st.select_slider("Durata barra (secondi) — più corta = reazione più rapida",
                                     options=[5, 10, 15, 30, 60], value=15, key="live_bar_seconds")
 
+    with st.expander("🧬 Ricalibrazione automatica periodica"):
+        st.caption(
+            "Se attiva, ogni tot ore il sistema riesegue da solo la ricerca della soglia e "
+            "dell'holding minimo migliori (stessa logica del walk-forward: taratura su una parte "
+            "dello storico recente, verifica sull'altra) e aggiorna i parametri qui sopra e nel "
+            "pannello laterale — ma solo se il campione di verifica è abbastanza grande da fidarsene, "
+            "altrimenti lascia tutto com'è e lo segnala nel registro qui sotto."
+        )
+        recal_enabled = st.checkbox("Attiva ricalibrazione automatica", value=False, key="live_recal_enabled")
+        recal_interval_h = st.slider("Ogni quante ore ricalibrare", 1, 48, 6, 1, key="live_recal_interval_h")
+
     if "live_feed" not in st.session_state:
         st.session_state.live_feed = None
     if "live_portfolio" not in st.session_state:
         st.session_state.live_portfolio = None
     if "live_trader" not in st.session_state:
         st.session_state.live_trader = None
+    if "live_recal_last_at" not in st.session_state:
+        st.session_state.live_recal_last_at = None
+    if "live_recal_log" not in st.session_state:
+        st.session_state.live_recal_log = []
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -550,6 +567,31 @@ with tab_live:
         st.write(f"Stato feed: {status_icon} **{feed.status}**" + (f" — {feed.last_error}" if feed.last_error else ""))
 
         prices = trader.tick()
+
+        if recal_enabled and live_products:
+            last_at = st.session_state.live_recal_last_at
+            due = last_at is None or (datetime.now(timezone.utc) - last_at).total_seconds() >= recal_interval_h * 3600
+            if due:
+                with st.spinner("Ricalibrazione automatica in corso (taratura + verifica su dati recenti)..."):
+                    keep_screen_awake()
+                    portfolio_kwargs_recal = dict(starting_cash=starting_cash, fee_rate=fee_pct,
+                                                   max_position_pct=max_pos_pct, stop_loss_pct=stop_loss_pct,
+                                                   take_profit_pct=take_profit_pct)
+                    recal = recalibrate(live_products, granularity=3600, hours=24 * 45,
+                                         weights=weights, portfolio_kwargs=portfolio_kwargs_recal)
+                st.session_state.live_recal_last_at = datetime.now(timezone.utc)
+                st.session_state.live_recal_log.insert(0, recal)
+                if recal["applied"]:
+                    st.session_state["cfg_buy_th"] = recal["best_threshold"]
+                    st.session_state["cfg_sell_th"] = -recal["best_threshold"]
+                    st.session_state["cfg_min_hold"] = int(recal["best_min_hold"])
+                st.rerun()
+
+        if st.session_state.live_recal_log:
+            with st.expander(f"📋 Registro ricalibrazioni ({len(st.session_state.live_recal_log)})"):
+                for entry in st.session_state.live_recal_log[:10]:
+                    icon = "✅" if entry["applied"] else "⏸️"
+                    st.write(f"{icon} **{entry['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}** — {entry['reason']}")
 
         metrics = portfolio.metrics(prices)
         m1, m2, m3, m4, m5 = st.columns(5)
