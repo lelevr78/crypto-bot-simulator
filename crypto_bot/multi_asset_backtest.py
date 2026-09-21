@@ -36,6 +36,8 @@ def run_multi_asset_backtest(candles_by_product: dict, manager: ManagerAgent, po
         raise ValueError("Serie storica troppo corta per il warmup degli indicatori")
 
     choice_log = []
+    candidate_counts = {p: 0 for p in aligned}  # quante volte ciascuna crypto ha superato la
+    chosen_counts = {p: 0 for p in aligned}      # soglia BUY, e quante volte è stata scelta come migliore
 
     for i in range(warmup, len(timeline)):
         ts = timeline[i]
@@ -56,12 +58,14 @@ def run_multi_asset_backtest(candles_by_product: dict, manager: ManagerAgent, po
                 portfolio.sell(product, price, ts, reason=decision.reason)
             elif decision.action == "BUY" and not has_position:
                 candidates.append((decision.score, product, price, decision.reason))
+                candidate_counts[product] += 1
 
         if candidates:
             candidates.sort(key=lambda c: c[0], reverse=True)
             best_score, best_product, best_price, best_reason = candidates[0]
             trade = portfolio.buy(best_product, best_price, ts, reason=best_reason)
             if trade:
+                chosen_counts[best_product] += 1
                 choice_log.append({
                     "timestamp": ts, "scelta": best_product, "score": best_score,
                     "alternative_scartate": [c[1] for c in candidates[1:]],
@@ -77,6 +81,8 @@ def run_multi_asset_backtest(candles_by_product: dict, manager: ManagerAgent, po
 
     metrics = portfolio.metrics(last_prices)
     metrics["choice_log"] = choice_log
+    metrics["candidate_counts"] = candidate_counts
+    metrics["chosen_counts"] = chosen_counts
     return metrics
 
 

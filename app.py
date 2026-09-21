@@ -306,17 +306,31 @@ with tab_auto:
                     eq_df = pd.DataFrame(portfolio.equity_curve).set_index("timestamp")
                     st.line_chart(eq_df["equity"], height=280)
 
+                candidate_counts = metrics.get("candidate_counts", {})
+                chosen_counts = metrics.get("chosen_counts", {})
+                if candidate_counts:
+                    st.markdown("**Quanto ha pesato ciascuna crypto nella scelta**")
+                    st.caption(
+                        "'Segnali validi' = quante volte ha superato la soglia BUY. 'Scelta' = quante "
+                        "volte ha AVUTO il punteggio più alto tra i segnali validi in quel momento. Una "
+                        "crypto con tanti segnali validi ma pochissime scelte perde sempre il confronto "
+                        "con le altre, non è che 'non funziona mai'."
+                    )
+                    counts_df = pd.DataFrame({
+                        "Crypto": list(candidate_counts.keys()),
+                        "Segnali validi": list(candidate_counts.values()),
+                        "Scelta": [chosen_counts.get(p, 0) for p in candidate_counts],
+                    }).sort_values("Segnali validi", ascending=False)
+                    st.dataframe(counts_df, use_container_width=True, hide_index=True)
+                    st.bar_chart(counts_df.set_index("Crypto")[["Segnali validi", "Scelta"]])
+
                 choice_log = metrics.get("choice_log", [])
                 if choice_log:
-                    st.markdown("**Quale crypto ha scelto l'agente, e quando**")
-                    choice_df = pd.DataFrame(choice_log)
-                    choice_df["alternative_scartate"] = choice_df["alternative_scartate"].apply(
-                        lambda alts: ", ".join(alts) if alts else "—")
-                    st.dataframe(choice_df, use_container_width=True, hide_index=True)
-
-                    counts = choice_df["scelta"].value_counts()
-                    st.markdown("**Quante volte è stata scelta ciascuna crypto**")
-                    st.bar_chart(counts)
+                    with st.expander("Dettaglio di ogni scelta (quando e perché)"):
+                        choice_df = pd.DataFrame(choice_log)
+                        choice_df["alternative_scartate"] = choice_df["alternative_scartate"].apply(
+                            lambda alts: ", ".join(alts) if alts else "—")
+                        st.dataframe(choice_df, use_container_width=True, hide_index=True)
 
                 if portfolio.trade_log:
                     trades_df = pd.DataFrame(portfolio.trade_log)
@@ -448,6 +462,17 @@ with tab_auto:
                     eq_df = pd.DataFrame(oos_portfolio.equity_curve).set_index("timestamp")
                     st.markdown("**Curva equity out-of-sample**")
                     st.line_chart(eq_df["equity"], height=250)
+
+                oos_candidate_counts = oos_m.get("candidate_counts", {})
+                oos_chosen_counts = oos_m.get("chosen_counts", {})
+                if oos_candidate_counts:
+                    st.markdown("**Quanto ha pesato ciascuna crypto nella scelta (out-of-sample)**")
+                    counts_df = pd.DataFrame({
+                        "Crypto": list(oos_candidate_counts.keys()),
+                        "Segnali validi": list(oos_candidate_counts.values()),
+                        "Scelta": [oos_chosen_counts.get(p, 0) for p in oos_candidate_counts],
+                    }).sort_values("Segnali validi", ascending=False)
+                    st.dataframe(counts_df, use_container_width=True, hide_index=True)
 
                 with st.expander("Griglia completa (tutte le combinazioni testate in-sample)"):
                     st.dataframe(wf["grid"], use_container_width=True, hide_index=True)
