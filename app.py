@@ -560,10 +560,17 @@ with tab_live:
         m5.metric("Cash disponibile", f"${metrics['cash']:,.2f}")
 
         st.markdown("**🧠 Decisioni del team di agenti (ultimo tick)**")
+        st.caption(
+            "'Azione' è cosa vorrebbe fare l'agente in base al punteggio. 'Eseguito' dice se è "
+            "davvero successo: un BUY/SELL può comparire come Azione ma restare bloccato (es. "
+            "dall'holding minimo) senza che scatti nessun trade — non è un bug, è il vincolo di rischio."
+        )
         rows = []
         for p, d in trader.last_decisions.items():
+            azione = d["action"]
+            eseguito = "✅" if d.get("executed") else ("⏳ bloccato" if d.get("blocked_by_min_hold") else "—")
             rows.append({
-                "Crypto": p, "Prezzo": prices.get(p), "Azione": d["action"],
+                "Crypto": p, "Prezzo": prices.get(p), "Azione": azione, "Eseguito": eseguito,
                 "Score": round(d.get("score", 0.0), 3),
                 "Confidenza": round(d.get("confidence", 0.0), 2),
                 "In posizione": p in portfolio.positions,

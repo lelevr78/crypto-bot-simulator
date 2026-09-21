@@ -41,17 +41,28 @@ class LivePaperTrader:
             decision = self.manager.decide(df, orderflow=orderflow, has_position=has_position)
 
             executed = None
+            blocked_by_min_hold = False
             if stop_trade:
                 executed = stop_trade
             elif decision.action == "BUY" and not has_position:
                 executed = self.portfolio.buy(product, price, now, reason=decision.reason)
-            elif decision.action == "SELL" and has_position and self.portfolio.held_long_enough(product, now):
-                executed = self.portfolio.sell(product, price, now, reason=decision.reason)
+            elif decision.action == "SELL" and has_position:
+                if self.portfolio.held_long_enough(product, now):
+                    executed = self.portfolio.sell(product, price, now, reason=decision.reason)
+                else:
+                    blocked_by_min_hold = True
+
+            reason = decision.reason
+            if blocked_by_min_hold:
+                pos = self.portfolio.positions.get(product)
+                elapsed = (now - pos.entry_ts).total_seconds() / 60.0 if pos and pos.entry_ts else 0.0
+                remaining = max(0.0, self.portfolio.min_hold_minutes - elapsed)
+                reason = f"⏳ vorrebbe vendere ma holding minimo non ancora raggiunto (mancano ~{remaining:.0f} min) | {reason}"
 
             self.last_decisions[product] = {
                 "action": decision.action, "score": decision.score,
-                "confidence": decision.confidence, "reason": decision.reason,
-                "executed": bool(executed),
+                "confidence": decision.confidence, "reason": reason,
+                "executed": bool(executed), "blocked_by_min_hold": blocked_by_min_hold,
             }
 
         if prices:
