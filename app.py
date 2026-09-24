@@ -706,6 +706,7 @@ with tab_poly:
     else:
         keep_screen_awake()
         monitor = st.session_state.poly_monitor
+        snapshots = []
         try:
             with st.spinner("Scansione mercati Polymarket..."):
                 markets = fetch_active_crypto_markets(limit=200)
@@ -717,6 +718,9 @@ with tab_poly:
                 for market in markets:
                     yes_quote = best_bid_ask(books.get(market["yes_token_id"]))
                     no_quote = best_bid_ask(books.get(market["no_token_id"]))
+                    snap = monitor.snapshot(market, yes_quote, no_quote)
+                    if snap is not None:
+                        snapshots.append(snap)
                     for event in monitor.evaluate(market, yes_quote, no_quote):
                         st.session_state.poly_events.insert(0, event)
             st.session_state.poly_last_scan_info = {
@@ -741,6 +745,21 @@ with tab_poly:
         p1, p2 = st.columns(2)
         p1.metric("Opportunità aperte ora", len(monitor.open_positions))
         p2.metric("Eventi registrati (totale)", len(st.session_state.poly_events))
+
+        if snapshots:
+            st.markdown("**🔍 Migliori spread osservati ora (anche sotto soglia)**")
+            st.caption(
+                "Serve a capire se il monitor sta davvero lavorando anche quando non scatta nessuna "
+                "opportunità: su Polymarket i grandi scostamenti vengono chiusi in pochi secondi da bot "
+                "professionali, quindi vedere 0 opportunità aperte è normale, non un malfunzionamento."
+            )
+            top_snapshots = sorted(snapshots, key=lambda s: s["edge_per_share"], reverse=True)[:15]
+            diag_rows = [{
+                "Mercato": s["question"], "Edge (c)": round(s["edge_per_share"] * 100, 2),
+                "YES ask": s["yes_ask"], "NO ask": s["no_ask"],
+                "Size disponibile": round(s["size_disponibile"], 0),
+            } for s in top_snapshots]
+            st.dataframe(pd.DataFrame(diag_rows), use_container_width=True, hide_index=True)
 
         if monitor.open_positions:
             st.markdown("**🔓 Opportunità attualmente aperte**")

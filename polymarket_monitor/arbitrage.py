@@ -44,6 +44,25 @@ class ArbitrageMonitor:
         self.config = config
         self.open_positions: dict[str, OpenOpportunity] = {}
 
+    def snapshot(self, market: dict, yes_quote: tuple, no_quote: tuple) -> dict | None:
+        """Calcola l'edge corrente per un mercato SENZA applicare le soglie
+        (utile per mostrare a schermo lo stato di tutti i mercati osservati,
+        non solo quelli che hanno scattato). Ritorna None se il book e'
+        troppo sottile per stimare un prezzo eseguibile."""
+        yes_ask, no_ask = yes_quote[2], no_quote[2]
+        if yes_ask is None or no_ask is None:
+            return None
+
+        cost_buy_both = yes_ask + no_ask
+        fee_cost = (yes_ask + no_ask) * self.config.fee_rate
+        edge = 1.0 - cost_buy_both - fee_cost  # profitto stimato per share, al netto della fee
+
+        available_size = min(yes_quote[3] or 0.0, no_quote[3] or 0.0)
+        return {
+            "market_id": market["id"], "question": market["question"], "edge_per_share": edge,
+            "yes_ask": yes_ask, "no_ask": no_ask, "size_disponibile": available_size,
+        }
+
     def evaluate(self, market: dict, yes_quote: tuple, no_quote: tuple) -> list[dict]:
         """yes_quote/no_quote = (best_bid, best_bid_size, best_ask, best_ask_size)
         cosi' come restituiti da clob_api.best_bid_ask(). Ritorna una lista di
@@ -52,18 +71,13 @@ class ArbitrageMonitor:
         now = datetime.now(timezone.utc)
         market_id = market["id"]
 
-        yes_ask, no_ask = yes_quote[2], no_quote[2]
-        if yes_ask is None or no_ask is None:
+        snap = self.snapshot(market, yes_quote, no_quote)
+        if snap is None:
             return events  # book troppo sottile per stimare un prezzo eseguibile
 
-        cost_buy_both = yes_ask + no_ask
-        fee_cost = (yes_ask + no_ask) * self.config.fee_rate
-        edge = 1.0 - cost_buy_both - fee_cost  # profitto stimato per share, al netto della fee
-
-        available_size = min(
-            yes_quote[3] or 0.0,
-            no_quote[3] or 0.0,
-        )
+        edge = snap["edge_per_share"]
+        yes_ask, no_ask = snap["yes_ask"], snap["no_ask"]
+        available_size = snap["size_disponibile"]
 
         already_open = market_id in self.open_positions
 
