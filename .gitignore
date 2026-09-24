@@ -8,3 +8,4 @@ __pycache__/
 data/cache/
 *.parquet
 .DS_Store
+polymarket_monitor/opportunities_log.csv
