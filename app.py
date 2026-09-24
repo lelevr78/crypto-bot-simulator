@@ -746,6 +746,9 @@ with tab_poly:
         p1.metric("Opportunità aperte ora", len(monitor.open_positions))
         p2.metric("Eventi registrati (totale)", len(st.session_state.poly_events))
 
+        # Schede verticali invece di st.dataframe: su iPhone lo scroll orizzontale
+        # di una tabella larga confonde il tocco con il ridimensionamento/riordino
+        # delle colonne. Una scheda per riga elimina lo scroll laterale.
         if snapshots:
             st.markdown("**🔍 Migliori spread osservati ora (anche sotto soglia)**")
             st.caption(
@@ -754,29 +757,47 @@ with tab_poly:
                 "professionali, quindi vedere 0 opportunità aperte è normale, non un malfunzionamento."
             )
             top_snapshots = sorted(snapshots, key=lambda s: s["edge_per_share"], reverse=True)[:15]
-            diag_rows = [{
-                "Mercato": s["question"], "Edge (c)": round(s["edge_per_share"] * 100, 2),
-                "YES ask": s["yes_ask"], "NO ask": s["no_ask"],
-                "Size disponibile": round(s["size_disponibile"], 0),
-            } for s in top_snapshots]
-            st.dataframe(pd.DataFrame(diag_rows), use_container_width=True, hide_index=True)
+            for s in top_snapshots:
+                with st.container(border=True):
+                    st.write(f"**{s['question']}**")
+                    st.caption(
+                        f"Edge {s['edge_per_share']*100:+.2f}c · YES ask {s['yes_ask']:.3f} · "
+                        f"NO ask {s['no_ask']:.3f} · Size disp. {s['size_disponibile']:.0f}"
+                    )
 
         if monitor.open_positions:
             st.markdown("**🔓 Opportunità attualmente aperte**")
-            open_rows = [{
-                "Mercato": o.question, "Aperta alle": o.opened_at.strftime("%H:%M:%S UTC"),
-                "Edge ingresso (c)": round(o.entry_edge * 100, 2),
-                "YES ask": o.yes_ask, "NO ask": o.no_ask,
-                "Size disponibile": round(o.available_size, 0),
-            } for o in monitor.open_positions.values()]
-            st.dataframe(pd.DataFrame(open_rows), use_container_width=True, hide_index=True)
+            for o in monitor.open_positions.values():
+                with st.container(border=True):
+                    st.write(f"**{o.question}**")
+                    st.caption(
+                        f"Aperta alle {o.opened_at.strftime('%H:%M:%S UTC')} · "
+                        f"Edge ingresso {o.entry_edge*100:+.2f}c · YES ask {o.yes_ask:.3f} · "
+                        f"NO ask {o.no_ask:.3f} · Size disp. {o.available_size:.0f}"
+                    )
 
         if st.session_state.poly_events:
             st.markdown("**📒 Registro eventi (apertura/chiusura)**")
             ev_df = pd.DataFrame(st.session_state.poly_events)
-            st.dataframe(ev_df.head(100), use_container_width=True, hide_index=True)
-            st.download_button("📥 Scarica registro CSV", ev_df.to_csv(index=False),
+            st.download_button("📥 Scarica registro completo CSV", ev_df.to_csv(index=False),
                                 "polymarket_opportunities.csv", "text/csv")
+            for ev in st.session_state.poly_events[:20]:
+                icona = "🟢" if ev["tipo"] == "APERTURA" else "🔴"
+                ts = ev["timestamp"].strftime("%H:%M:%S UTC")
+                with st.container(border=True):
+                    st.write(f"{icona} **{ev['tipo']}** · {ts} · {ev['question']}")
+                    if ev["tipo"] == "APERTURA":
+                        st.caption(
+                            f"Edge {ev['edge_per_share']*100:+.2f}c · YES ask {ev['yes_ask']:.3f} · "
+                            f"NO ask {ev['no_ask']:.3f} · Size disp. {ev['size_disponibile']:.0f}"
+                        )
+                    else:
+                        st.caption(
+                            f"Ingresso {ev['edge_ingresso']*100:+.2f}c → uscita {ev['edge_uscita']*100:+.2f}c · "
+                            f"durata {ev['durata_secondi']:.0f}s"
+                        )
+            if len(st.session_state.poly_events) > 20:
+                st.caption(f"Mostrati gli ultimi 20 eventi su {len(st.session_state.poly_events)} totali — scarica il CSV per vederli tutti.")
 
         import time
         time.sleep(poly_interval)
