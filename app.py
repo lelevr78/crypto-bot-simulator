@@ -21,6 +21,9 @@ from crypto_bot.manager import DEFAULT_WEIGHTS, ManagerAgent
 from crypto_bot.multi_asset_backtest import run_multi_asset_backtest, run_walk_forward
 from crypto_bot.multi_asset_backtest import run_threshold_sweep as run_multi_asset_sweep
 from crypto_bot.portfolio import Portfolio
+from polymarket_monitor.arbitrage import ArbitrageConfig, ArbitrageMonitor
+from polymarket_monitor.clob_api import best_bid_ask, fetch_books_batch
+from polymarket_monitor.gamma_api import fetch_active_crypto_markets
 
 st.set_page_config(page_title="Crypto Bot Simulator", layout="wide")
 
@@ -86,8 +89,9 @@ with st.sidebar:
 
 manager = ManagerAgent(weights=weights, buy_threshold=buy_th, sell_threshold=sell_th)
 
-tab_backtest, tab_batch, tab_auto, tab_live = st.tabs(
-    ["📈 Backtest storico", "📊 Validazione multi-crypto", "🎯 Portafoglio automatico", "🔴 Paper trading live"])
+tab_backtest, tab_batch, tab_auto, tab_live, tab_poly = st.tabs(
+    ["📈 Backtest storico", "📊 Validazione multi-crypto", "🎯 Portafoglio automatico", "🔴 Paper trading live",
+     "🎲 Polymarket arbitraggio"])
 
 # ------------------------------------------------------------------ BACKTEST
 with tab_backtest:
@@ -636,6 +640,128 @@ with tab_live:
             import time
             time.sleep(2)
             st.rerun()
+
+# ---------------------------------------------------------- POLYMARKET ARB
+with tab_poly:
+    st.subheader("Monitor di sola osservazione — arbitraggio su prediction market crypto (Polymarket)")
+    st.caption(
+        "Legge dati PUBBLICI reali da Polymarket (Gamma API + CLOB API): nessuna chiave privata, "
+        "nessun ordine reale viene mai inviato, nessuna esecuzione automatica. Calcola lo scostamento "
+        "di YES+NO dal fair value di 1.00$ sui mercati crypto attivi e segnala quando supera la soglia "
+        "di ingresso, fino a quando rientra sotto la soglia di uscita. I numeri sono stime lorde "
+        "sull'order book letto in quel momento, non garanzie su trade futuri."
+    )
+
+    pc1, pc2, pc3, pc4 = st.columns(4)
+    with pc1:
+        poly_entry = st.slider("Soglia ingresso (centesimi)", 0.5, 10.0, 2.0, 0.5, key="poly_entry") / 100
+    with pc2:
+        poly_exit = st.slider("Soglia uscita (centesimi)", 0.0, 5.0, 0.5, 0.5, key="poly_exit") / 100
+    with pc3:
+        poly_fee = st.slider("Commissione stimata per lato %", 0.0, 2.0, 0.0, 0.1, key="poly_fee") / 100
+    with pc4:
+        poly_interval = st.select_slider("Intervallo scansione (secondi)", [10, 15, 30, 60, 120], value=30, key="poly_interval")
+
+    if poly_exit >= poly_entry:
+        st.warning("La soglia di uscita deve essere minore di quella di ingresso, altrimenti l'opportunità si chiuderebbe subito.")
+
+    if "poly_monitor" not in st.session_state:
+        st.session_state.poly_monitor = None
+    if "poly_running" not in st.session_state:
+        st.session_state.poly_running = False
+    if "poly_events" not in st.session_state:
+        st.session_state.poly_events = []
+    if "poly_last_scan_info" not in st.session_state:
+        st.session_state.poly_last_scan_info = None
+
+    pb1, pb2, pb3 = st.columns(3)
+    with pb1:
+        poly_start = st.button("🟢 AVVIA MONITORAGGIO", type="primary", use_container_width=True,
+                                key="poly_start_btn", disabled=poly_exit >= poly_entry)
+    with pb2:
+        poly_stop = st.button("🔴 FERMA", use_container_width=True, key="poly_stop_btn")
+    with pb3:
+        poly_reset = st.button("♻️ AZZERA REGISTRO", use_container_width=True, key="poly_reset_btn")
+
+    if poly_start:
+        st.session_state.poly_monitor = ArbitrageMonitor(ArbitrageConfig(
+            entry_threshold=poly_entry, exit_threshold=poly_exit, fee_rate=poly_fee,
+        ))
+        st.session_state.poly_running = True
+    if poly_stop:
+        st.session_state.poly_running = False
+    if poly_reset:
+        st.session_state.poly_events = []
+        st.session_state.poly_last_scan_info = None
+
+    if st.session_state.poly_monitor is not None:
+        # Come per il live trading: le soglie possono cambiare mentre gira,
+        # e devono applicarsi subito senza dover fermare e riavviare.
+        st.session_state.poly_monitor.config.entry_threshold = poly_entry
+        st.session_state.poly_monitor.config.exit_threshold = poly_exit
+        st.session_state.poly_monitor.config.fee_rate = poly_fee
+
+    if not st.session_state.poly_running:
+        st.info("Premi 'AVVIA MONITORAGGIO' per iniziare a leggere i mercati crypto attivi su Polymarket (nessun ordine reale).")
+    else:
+        keep_screen_awake()
+        monitor = st.session_state.poly_monitor
+        try:
+            with st.spinner("Scansione mercati Polymarket..."):
+                markets = fetch_active_crypto_markets(limit=200)
+                token_ids = []
+                for m in markets:
+                    token_ids.append(m["yes_token_id"])
+                    token_ids.append(m["no_token_id"])
+                books = fetch_books_batch(token_ids) if token_ids else {}
+                for market in markets:
+                    yes_quote = best_bid_ask(books.get(market["yes_token_id"]))
+                    no_quote = best_bid_ask(books.get(market["no_token_id"]))
+                    for event in monitor.evaluate(market, yes_quote, no_quote):
+                        st.session_state.poly_events.insert(0, event)
+            st.session_state.poly_last_scan_info = {
+                "at": datetime.now(timezone.utc), "n_markets": len(markets), "error": None,
+            }
+        except Exception as e:
+            st.session_state.poly_last_scan_info = {
+                "at": datetime.now(timezone.utc), "n_markets": 0,
+                "error": f"{type(e).__name__}: {e}",
+            }
+
+        info = st.session_state.poly_last_scan_info
+        if info and info["error"]:
+            st.error(f"Errore durante la scansione: {info['error']} — riprovo al prossimo ciclo.")
+        elif info:
+            st.write(
+                f"🟢 Ultima scansione: **{info['at'].strftime('%H:%M:%S UTC')}** — "
+                f"{info['n_markets']} mercati crypto osservati, "
+                f"{len(monitor.open_positions)} opportunità aperte"
+            )
+
+        p1, p2 = st.columns(2)
+        p1.metric("Opportunità aperte ora", len(monitor.open_positions))
+        p2.metric("Eventi registrati (totale)", len(st.session_state.poly_events))
+
+        if monitor.open_positions:
+            st.markdown("**🔓 Opportunità attualmente aperte**")
+            open_rows = [{
+                "Mercato": o.question, "Aperta alle": o.opened_at.strftime("%H:%M:%S UTC"),
+                "Edge ingresso (c)": round(o.entry_edge * 100, 2),
+                "YES ask": o.yes_ask, "NO ask": o.no_ask,
+                "Size disponibile": round(o.available_size, 0),
+            } for o in monitor.open_positions.values()]
+            st.dataframe(pd.DataFrame(open_rows), use_container_width=True, hide_index=True)
+
+        if st.session_state.poly_events:
+            st.markdown("**📒 Registro eventi (apertura/chiusura)**")
+            ev_df = pd.DataFrame(st.session_state.poly_events)
+            st.dataframe(ev_df.head(100), use_container_width=True, hide_index=True)
+            st.download_button("📥 Scarica registro CSV", ev_df.to_csv(index=False),
+                                "polymarket_opportunities.csv", "text/csv")
+
+        import time
+        time.sleep(poly_interval)
+        st.rerun()
 
 st.divider()
 st.caption(
