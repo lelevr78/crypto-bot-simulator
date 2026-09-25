@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 from crypto_bot.agents import DEFAULT_AGENTS
 from crypto_bot.auto_recalibration import recalibrate
 from crypto_bot.batch_backtest import fetch_multi_candles
+from crypto_bot.constellation_ui import CONSTELLATION_CSS, render_agent_constellation
 from crypto_bot.data import VALID_GRANULARITIES
 from crypto_bot.feed import LiveFeed
 from crypto_bot.live_paper import LivePaperTrader
@@ -25,6 +26,7 @@ from polymarket_monitor.clob_api import best_bid_ask, fetch_books_batch
 from polymarket_monitor.gamma_api import fetch_active_crypto_markets
 
 st.set_page_config(page_title="Crypto Bot Simulator", layout="wide")
+st.markdown(CONSTELLATION_CSS, unsafe_allow_html=True)
 
 PRODUCTS = ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD", "LINK-USD", "ADA-USD", "AVAX-USD"]
 GRANULARITY_LABELS = {60: "1 minuto", 300: "5 minuti", 900: "15 minuti", 3600: "1 ora"}
@@ -448,23 +450,36 @@ with tab_live:
 
         st.markdown("**🧠 Decisioni del team di agenti (ultimo tick)**")
         st.caption(
-            "'Azione' è cosa vorrebbe fare l'agente in base al punteggio. 'Eseguito' dice se è "
-            "davvero successo: un BUY/SELL può comparire come Azione ma restare bloccato (es. "
-            "dall'holding minimo) senza che scatti nessun trade — non è un bug, è il vincolo di rischio."
+            "Ogni orbita è un agente — MOM=Momentum, MR=MeanReversion, BRK=Breakout, OF=OrderFlow — "
+            "verde = punta al rialzo, rosso = al ribasso, più intensa/veloce = segnale più forte, "
+            "spenta/grigia = nessun dato in questo momento. Il nodo centrale è la decisione combinata. "
+            "'Bloccato' significa che l'agente vorrebbe uscire ma l'holding minimo non è ancora scaduto "
+            "— non è un bug, è il vincolo di rischio."
         )
-        rows = []
+        # Una sola colonna (schede impilate) invece di affiancarle: su iPhone
+        # affiancare due costellazioni da 250px le farebbe uscire dallo schermo.
         for p, d in trader.last_decisions.items():
-            azione = d["action"]
-            eseguito = "✅" if d.get("executed") else ("⏳ bloccato" if d.get("blocked_by_min_hold") else "—")
-            rows.append({
-                "Crypto": p, "Prezzo": prices.get(p), "Azione": azione, "Eseguito": eseguito,
-                "Score": round(d.get("score", 0.0), 3),
-                "Confidenza": round(d.get("confidence", 0.0), 2),
-                "In posizione": p in portfolio.positions,
-                "Motivazione": d.get("reason", ""),
-            })
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            with st.container(border=True):
+                signals = d.get("signals") or []
+                if not signals:
+                    st.write(f"**{p}**")
+                    st.caption(d.get("reason", ""))
+                else:
+                    executed_icon = "✅" if d.get("executed") else ("⏳" if d.get("blocked_by_min_hold") else "")
+                    html = render_agent_constellation(
+                        product=p, action=d["action"], combined_score=d.get("score", 0.0),
+                        confidence=d.get("confidence", 0.0), signals=signals, executed_icon=executed_icon,
+                    )
+                    st.markdown(html, unsafe_allow_html=True)
+                    prezzo = prices.get(p)
+                    stato = "✅ eseguito" if d.get("executed") else (
+                        "⏳ bloccato dall'holding minimo" if d.get("blocked_by_min_hold") else "—")
+                    st.caption(
+                        f"Prezzo: ${prezzo:,.4f}" if prezzo is not None else "Prezzo: n/d"
+                    )
+                    st.caption(f"{stato} · {'in posizione' if p in portfolio.positions else 'nessuna posizione'}")
+                    with st.expander("Motivazione dettagliata"):
+                        st.caption(d.get("reason", ""))
 
         if portfolio.equity_curve:
             eq_df = pd.DataFrame(portfolio.equity_curve).set_index("timestamp")

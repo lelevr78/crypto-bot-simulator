@@ -32,7 +32,7 @@ class LivePaperTrader:
 
             if len(df) < self.warmup:
                 self.last_decisions[product] = {
-                    "action": "HOLD", "score": 0.0, "confidence": 0.0,
+                    "action": "HOLD", "score": 0.0, "confidence": 0.0, "signals": [],
                     "reason": f"riscaldamento indicatori: {len(df)}/{self.warmup} barre raccolte",
                 }
                 continue
@@ -61,7 +61,7 @@ class LivePaperTrader:
 
             self.last_decisions[product] = {
                 "action": decision.action, "score": decision.score,
-                "confidence": decision.confidence, "reason": reason,
+                "confidence": decision.confidence, "reason": reason, "signals": decision.signals,
                 "executed": bool(executed), "blocked_by_min_hold": blocked_by_min_hold,
             }
 
