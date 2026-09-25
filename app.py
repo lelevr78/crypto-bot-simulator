@@ -16,7 +16,7 @@ from crypto_bot.batch_backtest import fetch_multi_candles
 from crypto_bot.data import VALID_GRANULARITIES
 from crypto_bot.feed import LiveFeed
 from crypto_bot.live_paper import LivePaperTrader
-from crypto_bot.manager import DEFAULT_WEIGHTS, ManagerAgent
+from crypto_bot.manager import DEFAULT_WEIGHTS, WEIGHT_PROFILES, ManagerAgent
 from crypto_bot.multi_asset_backtest import run_multi_asset_backtest, run_walk_forward
 from crypto_bot.multi_asset_backtest import run_threshold_sweep as run_multi_asset_sweep
 from crypto_bot.portfolio import Portfolio
@@ -64,7 +64,12 @@ with st.sidebar:
         st.caption("Peso di ciascun agente nel voto finale (più alto = più influenza).")
         weights = {}
         for a in DEFAULT_AGENTS:
-            weights[a.name] = st.slider(a.name, 0.0, 2.0, DEFAULT_WEIGHTS.get(a.name, 1.0), 0.1)
+            weights[a.name] = st.slider(a.name, 0.0, 2.0, DEFAULT_WEIGHTS.get(a.name, 1.0), 0.1,
+                                         key=f"cfg_weight_{a.name}")
+        st.caption(
+            "Non sai come pesarli? Vai su 'Portafoglio automatico' → 'Walk-forward' e usa il "
+            "pulsante che sceglie il mix di pesi migliore in automatico, verificato su dati mai visti."
+        )
         buy_th = st.slider("Soglia BUY (score combinato)", 0.0, 1.0, 0.35, 0.05, key="cfg_buy_th")
         sell_th = st.slider("Soglia SELL (score combinato)", -1.0, 0.0, -0.35, 0.05, key="cfg_sell_th")
         st.caption(
@@ -222,10 +227,11 @@ with tab_auto:
     st.divider()
     st.subheader("🔬 Walk-forward (taratura + verifica separate)")
     st.caption(
-        "Il test più rigoroso contro l'overfitting: la soglia e l'holding minimo vengono scelti "
-        "SOLO guardando la prima parte dello storico (in-sample). Il risultato finale che conta è "
-        "quello sulla parte successiva, mai vista durante la taratura (out-of-sample) — se regge "
-        "vicino ai numeri dell'in-sample è un segnale vero, se crolla era solo rumore tarato bene."
+        "Il test più rigoroso contro l'overfitting: soglia, holding minimo E il mix di pesi tra "
+        "gli agenti vengono scelti SOLO guardando la prima parte dello storico (in-sample). Il "
+        "risultato finale che conta è quello sulla parte successiva, mai vista durante la taratura "
+        "(out-of-sample) — se regge vicino ai numeri dell'in-sample è un segnale vero, se crolla "
+        "era solo rumore tarato bene."
     )
     split_pct = st.select_slider("Percentuale dati per la taratura (in-sample)",
                                   options=[50, 60, 70], value=60, key="wf_split_pct")
@@ -234,7 +240,7 @@ with tab_auto:
             st.warning("Seleziona almeno 2 crypto qui sopra.")
         else:
             with st.spinner(f"Scarico i dati una volta sola, taro su {split_pct}% dello storico "
-                             f"e verifico sul resto..."):
+                             f"(soglia, holding e pesi) e verifico sul resto..."):
                 keep_screen_awake()
                 candles_by_product = fetch_multi_candles(auto_products, auto_gran, auto_hours)
                 portfolio_kwargs = dict(starting_cash=starting_cash, fee_rate=fee_pct,
@@ -244,6 +250,7 @@ with tab_auto:
                 min_holds = [240, 480, 720, 1440]
                 try:
                     wf = run_walk_forward(candles_by_product, thresholds, min_holds, weights=weights,
+                                           weight_profiles=WEIGHT_PROFILES,
                                            portfolio_kwargs=portfolio_kwargs, split_ratio=split_pct / 100)
                 except ValueError as e:
                     st.error(str(e))
@@ -252,9 +259,17 @@ with tab_auto:
             if wf:
                 st.info(
                     f"Combinazione scelta sull'in-sample: soglia **{wf['best_threshold']:.2f}**, "
-                    f"holding minimo **{int(wf['best_min_hold'])} min**. Punto di taglio: "
-                    f"{wf['split_timestamp']}."
+                    f"holding minimo **{int(wf['best_min_hold'])} min**, pesi "
+                    f"**\"{wf['best_weight_profile']}\"** ({wf['best_weights']}). "
+                    f"Punto di taglio: {wf['split_timestamp']}."
                 )
+                if st.button("✅ Applica soglia, holding e pesi automaticamente", key="apply_wf_all"):
+                    st.session_state["cfg_buy_th"] = wf["best_threshold"]
+                    st.session_state["cfg_sell_th"] = -wf["best_threshold"]
+                    st.session_state["cfg_min_hold"] = int(wf["best_min_hold"])
+                    for agent_name, w in wf["best_weights"].items():
+                        st.session_state[f"cfg_weight_{agent_name}"] = w
+                    st.rerun()
 
                 is_m, oos_m = wf["is_metrics"], wf["oos_metrics"]
                 c1, c2 = st.columns(2)
@@ -413,6 +428,8 @@ with tab_live:
                     st.session_state["cfg_buy_th"] = recal["best_threshold"]
                     st.session_state["cfg_sell_th"] = -recal["best_threshold"]
                     st.session_state["cfg_min_hold"] = int(recal["best_min_hold"])
+                    for agent_name, w in (recal.get("best_weights") or {}).items():
+                        st.session_state[f"cfg_weight_{agent_name}"] = w
                 st.rerun()
 
         if st.session_state.live_recal_log:

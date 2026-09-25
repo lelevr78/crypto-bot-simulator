@@ -137,36 +137,50 @@ def split_walk_forward(candles_by_product: dict, split_ratio: float = 0.6, warmu
 
 
 def run_walk_forward(candles_by_product: dict, thresholds: list[float], min_holds: list[float],
-                      weights: dict | None = None, portfolio_kwargs: dict | None = None,
+                      weights: dict | None = None, weight_profiles: dict[str, dict] | None = None,
+                      portfolio_kwargs: dict | None = None,
                       split_ratio: float = 0.6, warmup: int = 25, min_is_trades: int = 15) -> dict:
     """Vera validazione out-of-sample: prova una griglia di soglie/holding minimo
-    SOLO sulla prima parte dello storico (in-sample), sceglie la combinazione
-    migliore, poi la testa UNA SOLA VOLTA sulla parte successiva mai vista
-    (out-of-sample) senza più toccare nulla. Se il risultato out-of-sample regge
-    (non crolla rispetto all'in-sample), è un segnale reale; se crolla, i parametri
-    erano tarati sul rumore di quel periodo specifico (overfitting)."""
+    (e, se forniti, di profili di pesi tra gli agenti) SOLO sulla prima parte
+    dello storico (in-sample), sceglie la combinazione migliore, poi la testa
+    UNA SOLA VOLTA sulla parte successiva mai vista (out-of-sample) senza più
+    toccare nulla. Se il risultato out-of-sample regge (non crolla rispetto
+    all'in-sample), è un segnale reale; se crolla, i parametri erano tarati
+    sul rumore di quel periodo specifico (overfitting).
+
+    weight_profiles: {nome_profilo: {agente: peso, ...}, ...}. Ogni profilo viene
+    fuso sopra 'weights' (così un agente non menzionato nel profilo mantiene il
+    suo peso base, es. OrderFlow che nel backtest storico è sempre inattivo).
+    Se omesso, si tara solo su un singolo profilo fisso pari a 'weights'
+    (comportamento identico a prima di questo parametro)."""
     is_candles, oos_candles, split_ts = split_walk_forward(candles_by_product, split_ratio, warmup)
 
+    base_weights = weights or {}
+    profiles = weight_profiles or {"(pesi correnti)": {}}
+
     grid_rows = []
-    for th in thresholds:
-        for mh in min_holds:
-            manager = ManagerAgent(weights=weights, buy_threshold=th, sell_threshold=-th)
-            pf_kwargs = dict(portfolio_kwargs or {})
-            pf_kwargs["min_hold_minutes"] = mh
-            portfolio = Portfolio(**pf_kwargs)
-            try:
-                metrics = run_multi_asset_backtest(is_candles, manager, portfolio, warmup=warmup)
-            except ValueError:
-                continue
-            grid_rows.append({
-                "soglia": th, "holding_min": mh, "trade": metrics["num_trades"],
-                "return_pct": metrics["total_return_pct"], "win_rate_pct": metrics["win_rate_pct"],
-                "drawdown_pct": metrics["max_drawdown_pct"],
-            })
+    for profile_name, profile_weights in profiles.items():
+        merged_weights = {**base_weights, **profile_weights} or None
+        for th in thresholds:
+            for mh in min_holds:
+                manager = ManagerAgent(weights=merged_weights, buy_threshold=th, sell_threshold=-th)
+                pf_kwargs = dict(portfolio_kwargs or {})
+                pf_kwargs["min_hold_minutes"] = mh
+                portfolio = Portfolio(**pf_kwargs)
+                try:
+                    metrics = run_multi_asset_backtest(is_candles, manager, portfolio, warmup=warmup)
+                except ValueError:
+                    continue
+                grid_rows.append({
+                    "profilo_pesi": profile_name, "pesi": merged_weights,
+                    "soglia": th, "holding_min": mh, "trade": metrics["num_trades"],
+                    "return_pct": metrics["total_return_pct"], "win_rate_pct": metrics["win_rate_pct"],
+                    "drawdown_pct": metrics["max_drawdown_pct"],
+                })
 
     grid_df = pd.DataFrame(grid_rows)
     if grid_df.empty:
-        raise ValueError("Nessuna combinazione soglia/holding ha prodotto un risultato valido sull'in-sample.")
+        raise ValueError("Nessuna combinazione soglia/holding/pesi ha prodotto un risultato valido sull'in-sample.")
 
     candidates = grid_df[grid_df["trade"] >= min_is_trades]
     if candidates.empty:
@@ -174,7 +188,9 @@ def run_walk_forward(candles_by_product: dict, thresholds: list[float], min_hold
     best = candidates.loc[candidates["return_pct"].idxmax()]
 
     best_th, best_mh = float(best["soglia"]), float(best["holding_min"])
-    manager_oos = ManagerAgent(weights=weights, buy_threshold=best_th, sell_threshold=-best_th)
+    best_weights = best["pesi"]
+    best_weight_profile = best["profilo_pesi"]
+    manager_oos = ManagerAgent(weights=best_weights, buy_threshold=best_th, sell_threshold=-best_th)
     pf_kwargs_oos = dict(portfolio_kwargs or {})
     pf_kwargs_oos["min_hold_minutes"] = best_mh
     portfolio_oos = Portfolio(**pf_kwargs_oos)
@@ -184,6 +200,8 @@ def run_walk_forward(candles_by_product: dict, thresholds: list[float], min_hold
         "grid": grid_df,
         "best_threshold": best_th,
         "best_min_hold": best_mh,
+        "best_weights": best_weights,
+        "best_weight_profile": best_weight_profile,
         "is_metrics": best.to_dict(),
         "oos_metrics": oos_metrics,
         "oos_portfolio": portfolio_oos,

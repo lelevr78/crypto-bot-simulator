@@ -27,6 +27,17 @@ DEFAULT_WEIGHTS = {
     "OrderFlow": 1.2,   # peso più alto: è il segnale "anticipatorio"
 }
 
+# Profili di pesi candidati per la taratura automatica (walk-forward). OrderFlow
+# non compare: nel backtest storico non ha mai dati live, quindi è sempre escluso
+# dal voto (Signal.available=False) e il suo peso non farebbe differenza — resta
+# quello impostato manualmente, usato solo in tempo reale.
+WEIGHT_PROFILES = {
+    "Equilibrato": {"Momentum": 1.0, "MeanReversion": 1.0, "Breakout": 1.0},
+    "Trend forte": {"Momentum": 1.6, "MeanReversion": 0.4, "Breakout": 1.0},
+    "Mean-reversion forte": {"Momentum": 0.4, "MeanReversion": 1.6, "Breakout": 1.0},
+    "Breakout forte": {"Momentum": 0.8, "MeanReversion": 0.4, "Breakout": 1.8},
+}
+
 
 class ManagerAgent:
     def __init__(self, agents=None, weights=None, buy_threshold=0.35, sell_threshold=-0.35,
