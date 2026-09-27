@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radar Voli</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <div class="brand"><span class="logo" aria-hidden="true">✈</span> Radar Voli</div>
+      <div class="live"><span class="dot"></span> <span id="live-text">In scansione…</span></div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>Voli con prezzi fino al 90% in meno</h1>
+      <p>Il radar confronta di continuo le tariffe con il loro prezzo abituale e ti mostra solo i ribassi davvero insoliti.</p>
+    </section>
+
+    <section class="stats" aria-label="Statistiche">
+      <div class="stat"><span class="num" id="s-comb">–</span><span class="lbl">combinazioni analizzate</span></div>
+      <div class="stat"><span class="num" id="s-deals">–</span><span class="lbl">offerte attive</span></div>
+      <div class="stat"><span class="num" id="s-avg">–</span><span class="lbl">sconto medio</span></div>
+      <div class="stat"><span class="num" id="s-min">–</span><span class="lbl">prezzo più basso</span></div>
+    </section>
+
+    <form class="filters" id="filters">
+      <label>Parto da
+        <select name="origin" id="f-origin"><option value="">Tutti gli aeroporti</option></select>
+      </label>
+      <label>Sconto minimo
+        <select name="min_discount">
+          <option value="0.5">50% o più</option>
+          <option value="0.6">60% o più</option>
+          <option value="0.75">75% o più (error fare)</option>
+        </select>
+      </label>
+      <label>Budget massimo
+        <select name="max_price">
+          <option value="">Qualsiasi</option>
+          <option value="50">fino a 50 €</option>
+          <option value="100">fino a 100 €</option>
+          <option value="200">fino a 200 €</option>
+          <option value="400">fino a 400 €</option>
+        </select>
+      </label>
+      <label>Mese di partenza
+        <select name="month" id="f-month"><option value="">Qualsiasi</option></select>
+      </label>
+      <label>Ordina per
+        <select name="sort">
+          <option value="sconto">Sconto più alto</option>
+          <option value="prezzo">Prezzo più basso</option>
+          <option value="recenti">Più recenti</option>
+          <option value="partenza">Partenza più vicina</option>
+        </select>
+      </label>
+    </form>
+
+    <p class="count" id="count"></p>
+    <section class="grid" id="grid" aria-live="polite"></section>
+    <p class="empty" id="empty" hidden>Nessuna offerta con questi filtri al momento. Il radar continua a cercare: la pagina si aggiorna da sola.</p>
+
+    <footer class="note">
+      Prezzi andata e ritorno per persona. Le tariffe anomale spariscono in fretta: verifica sempre il prezzo finale sul sito di prenotazione.
+      <span id="provider-note"></span>
+    </footer>
+  </main>
+
+  <dialog id="detail">
+    <form method="dialog"><button class="close" aria-label="Chiudi">×</button></form>
+    <div id="detail-body"></div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

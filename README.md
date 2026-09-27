@@ -68,3 +68,53 @@ crypto-bot-simulator/
 ## Disclaimer
 
 Questo progetto è **educativo**. Fee, slippage e microstructure reali differiscono. L’agente “order-flow” è un **proxy OHLCV**, non true order-flow. Risultati di backtest non garantiscono performance future. **Non usare per trading reale senza review indipendente.**
+
+---
+
+# ✈ Radar Voli — monitoraggio offerte voli
+
+Portale web che analizza di continuo combinazioni di tariffe aeree (origine × destinazione × date × durata) e segnala **solo i ribassi davvero insoliti** (tipicamente dal 50% al 90% in meno del prezzo abituale).
+
+Nessuna dipendenza esterna: basta Python 3.10+.
+
+```bash
+python3 -m flight_deals            # poi apri http://127.0.0.1:8000
+python3 -m flight_deals --origins VRN,VCE,BGY --min-discount 0.6
+```
+
+## Come funziona l'algoritmo
+
+Per ogni rotta si tiene lo storico recente dei prezzi (ultimi 400):
+
+- **prezzo abituale** = mediana dello storico;
+- **variazione tipica** = MAD (deviazione assoluta mediana), robusta agli outlier;
+- una tariffa è un'**offerta** se lo sconto sulla mediana è ≥ 50% **e** il ribasso è ≥ 2,5 volte la variazione tipica (così le rotte molto volatili non generano falsi allarmi);
+- le tariffe anomale **non** entrano nello storico, quindi non abbassano il prezzo di riferimento.
+
+Livelli: *Ottimo prezzo* (≥50%), *Super offerta* (≥60%), *Error fare* (≥75%). Le offerte scadono dopo 12 ore (`--ttl-hours`) o alla data di partenza.
+
+## Fonte dati
+
+| Provider | Uso |
+|---|---|
+| `simulato` (default) | Tariffe realistiche generate localmente (distanza, stagione, anticipo, rumore) con rari error fare. Ideale per demo e test. |
+| `travelpayouts` | Prezzi reali (cache Aviasales) via Travelpayouts Data API. Registrati su travelpayouts.com e imposta `TRAVELPAYOUTS_TOKEN`: il provider si attiva da solo. |
+
+Per aggiungere un'altra fonte (Duffel, Kiwi, …) basta una classe con `name`, `routes()` e `sample(n) -> list[Fare]` in `flight_deals/providers.py`.
+
+## Struttura
+
+```
+flight_deals/
+├── airports.py   # aeroporti di partenza (VRN, VCE, BGY, MXP, BLQ) e 38 destinazioni
+├── providers.py  # sorgenti tariffe (simulata / Travelpayouts)
+├── detector.py   # algoritmo di rilevamento anomalie
+├── store.py      # archivio SQLite delle offerte
+├── scanner.py    # ciclo di scansione continua in background
+├── server.py     # API JSON + pagina web
+└── static/       # interfaccia (HTML/CSS/JS, responsive, tema chiaro/scuro)
+```
+
+API: `GET /api/deals?origin=VRN&min_discount=0.6&max_price=100&month=2026-11&sort=prezzo`, `GET /api/status`, `GET /api/airports`.
+
+Test: `python3 -m unittest tests.test_flight_deals -v`
