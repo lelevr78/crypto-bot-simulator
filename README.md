@@ -1,70 +1,89 @@
-# Crypto Bot Simulator (Paper Trading)
+# Crypto Bot Simulator
 
-Simulatore **paper-trading** multi-agente per crypto. **Nessun ordine reale** — solo backtest su OHLCV pubblici Coinbase.
+Simulatore di trading crypto su dati pubblici Coinbase, **solo paper trading**:
+nessun ordine reale viene mai inviato. Il repository contiene due implementazioni
+indipendenti, nate in parallelo, dello stesso concetto (team di agenti che vota
+BUY/SELL/HOLD su un portafoglio virtuale):
 
-**Paper-trading only / solo simulazione.** No API keys, no live trading.
+- **`crypto_bot/` + `app.py`** — dashboard interattiva Streamlit (live + backtest).
+- **`crypto_sim/`** — tool a riga di comando con backtest multi-asset e walk-forward.
 
-## Cosa fa
+Non c'è un vincitore designato tra le due: la dashboard è comoda per l'uso
+quotidiano (anche da telefono, via Streamlit Cloud) e per il paper trading in
+tempo reale; il tool CLI è comodo per lanciare in un colpo solo una suite di
+test più estesa e rigorosa. Usa quella più adatta a quello che ti serve.
 
-1. Scarica candele pubbliche Coinbase (`BTC-USD`, `ETH-USD`, `SOL-USD`, `XRP-USD`, `ADA-USD`, `LINK-USD`) su timeframe `1h` (anche `1m`/`5m`/`15m` supportati nel loader).
-2. Quattro agenti indipendenti producono uno score ∈ [-1, +1] usando **solo dati ≤ barra corrente**:
-   - **Momentum** — incrocio EMA veloce/lenta + ROC
-   - **Mean-reversion** — RSI contrarian
-   - **Breakout** — prezzo vs Bollinger Bands
-   - **Order-flow (proxy)** — imbalance body/wick/volume da OHLCV (*non* order book reale)
-3. Un **manager** combina gli score con pesi configurabili → `BUY` / `SELL` / `HOLD`.
-4. **Portafoglio long-only** virtuale: fee 0.3% per lato (default), stop-loss / take-profit automatici, curva di equity.
-5. **Backtester rigoroso**: segnale a `t` → fill a `t+1` open; metriche return%, trades, win rate%, max DD%, buy&hold%.
-6. Suite multi-asset × multi-periodo + **walk-forward** (tune IS, freeze OOS).
-7. Se il win rate aggregato è **>80%** in modo consistente → stampa **OVERFITTING WARNING** (non successo). In algoritmi reali 45–60% con buon R:R è già solido.
+## 1. Dashboard Streamlit (`crypto_bot/`)
 
-## Installazione
+- **`crypto_bot/agents.py`** — 4 agenti indipendenti:
+  - `Momentum` (incrocio EMA9/EMA21 + rate of change)
+  - `MeanReversion` (RSI ipercomprato/ipervenduto, contrarian)
+  - `Breakout` (posizione rispetto alle bande di Bollinger)
+  - `OrderFlow` — l'agente "anticipatorio": legge l'aggressività dei trade
+    (buy vs sell volume) e lo sbilanciamento dell'order book **sulla barra
+    ancora in formazione**, per provare a reagire prima che la candela chiuda.
+    Disponibile solo in modalità live (nel backtest storico viene escluso dal
+    voto, non essendoci dati di order-flow storici).
+- **`crypto_bot/manager.py`** — combina i voti pesati del team in uno score
+  unico, con un filtro di volatilità opzionale.
+- **`crypto_bot/portfolio.py`** — portafoglio paper: cash, posizioni, fee,
+  stop-loss/take-profit automatici, curva equity, metriche (return, win rate,
+  drawdown).
+- **`crypto_bot/data.py`** — scarica candele storiche reali dall'API pubblica
+  di Coinbase Exchange (nessuna API key) per il backtest.
+- **`crypto_bot/feed.py`** — si collega al WebSocket pubblico Coinbase
+  Advanced Trade (`market_trades` + `level2`) e aggrega i trade in barre OHLCV
+  in tempo reale, tenendo viva la barra "in formazione".
+- **`crypto_bot/backtester.py`** / **`crypto_bot/multi_asset_backtest.py`** /
+  **`crypto_bot/batch_backtest.py`** / **`crypto_bot/live_paper.py`** —
+  eseguono il team di agenti su un singolo asset, su un portafoglio condiviso
+  multi-crypto (l'agente sceglie da solo la crypto migliore), su una batteria
+  di asset per validazione statistica, e in live — mai con ordini reali.
+- **`app.py`** — dashboard Streamlit con le modalità: *Backtest storico*,
+  *Validazione multi-crypto* (con confronto/scelta automatica della soglia),
+  *Portafoglio automatico* (multi-crypto, un solo portafoglio condiviso) e
+  *Paper trading live*.
+
+### Avvio
 
 ```bash
-cd /workspace/crypto-bot-simulator
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+## 2. Tool CLI (`crypto_sim/`)
+
+Backtest multi-asset e multi-periodo con walk-forward validation (taratura su
+una finestra, verifica su dati mai visti), pensato per lanciare in un colpo
+solo una suite di test più estesa di quella della dashboard.
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+
+python -m crypto_sim run          # suite completa
+python -m crypto_sim run --quick  # smoke test più corto
 ```
 
-Dipendenze: `requests`, `pandas`, `numpy`, `tqdm` (opzionale).
+Output: tabella `asset | period | return% | trades | winrate% | maxDD% | BH%`,
+blocco aggregato, walk-forward IS/OOS, avviso di overfitting se il win rate
+aggregato supera l'80% in modo consistente (segnale di sovra-adattamento ai
+dati storici, non un successo). CSV salvati in `results/`, cache dati in
+`data/cache/`.
 
-## Uso
+## Limiti onesti (validi per entrambe le implementazioni)
 
-```bash
-# Suite completa: ≥6 asset × 2 finestre ~120 giorni su 1h + walk-forward
-python -m crypto_sim run
-
-# Smoke test più corto
-python -m crypto_sim run --quick
-```
-
-Output: tabella `asset | period | return% | trades | winrate% | maxDD% | BH%`, blocco **AGGREGATE**, walk-forward IS/OOS, eventuale avviso overfitting. CSV in `results/`.
-
-Cache dati: `data/cache/*.csv`.
-
-## Struttura
-
-```
-crypto-bot-simulator/
-  README.md
-  requirements.txt
-  crypto_sim/
-    __init__.py
-    __main__.py
-    config.py
-    indicators.py
-    data/coinbase.py
-    agents/…
-    manager.py
-    portfolio.py
-    backtester.py
-    walk_forward.py
-    report.py
-    main.py
-  results/
-```
-
-## Disclaimer
-
-Questo progetto è **educativo**. Fee, slippage e microstructure reali differiscono. L’agente “order-flow” è un **proxy OHLCV**, non true order-flow. Risultati di backtest non garantiscono performance future. **Non usare per trading reale senza review indipendente.**
+- Nessun sistema retail può "vedere" un movimento di prezzo prima che accada
+  con certezza: i segnali di order-flow/microstruttura a volte anticipano la
+  direzione della barra, ma non è una garanzia.
+- La latenza a livello di millisecondi/microsecondi è dominio di
+  infrastrutture professionali (colocation, HFT); questi strumenti competono
+  sulla qualità del segnale, non sulla velocità pura.
+- Un win rate molto alto (es. >80%) ottenuto tarando pesi/soglie sugli stessi
+  dati storici testati è quasi sempre un segnale di overfitting, non di un
+  vero vantaggio — va sempre riverificato su dati nuovi (out-of-sample/walk-forward).
+- Prima di anche solo pensare a soldi reali servirebbe: backtest su molti più
+  dati e mercati, validazione walk-forward, gestione del rischio più rigorosa
+  e piena consapevolezza dei rischi. Il codice qui presente esegue **solo
+  simulazioni**.
