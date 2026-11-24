@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mutui e Prestiti</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --ink:#1d2430; --muted:#6b7480; --line:#e3e6eb;
+    --acc:#1f5fbf; --acc2:#e6eefb; --ok:#1d8a4e; --warn:#b5651d; --danger:#c0392b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14171c; --card:#1d2128; --ink:#e7eaee; --muted:#9aa3ad; --line:#2d333c;
+      --acc:#6aa3ff; --acc2:#1f2b40; --ok:#4cc38a; --warn:#e0a060; --danger:#ff7b6b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{padding:20px 16px 8px;max-width:1100px;margin:auto;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+  h1{font-size:22px;margin:0}
+  main{max-width:1100px;margin:auto;padding:0 16px 40px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+  .kpi .l{color:var(--muted);font-size:13px}
+  .kpi .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums}
+  button,.btn{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+  button.sec{background:var(--acc2);color:var(--acc)}
+  button.del{background:transparent;color:var(--danger);padding:4px 8px}
+  button.link{background:transparent;color:var(--acc);padding:4px 8px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:500;font-size:13px}
+  .scroll{overflow-x:auto}
+  .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;min-width:80px}
+  .bar>i{display:block;height:100%;background:var(--ok)}
+  .tag{font-size:12px;padding:2px 8px;border-radius:10px;background:var(--acc2);color:var(--acc)}
+  .warn{color:var(--warn)}
+  dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);max-width:520px;width:calc(100% - 32px)}
+  dialog::backdrop{background:#0007}
+  form.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  form.grid label{display:flex;flex-direction:column;font-size:13px;color:var(--muted);gap:4px}
+  form.grid .full{grid-column:1/-1}
+  input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--ink)}
+  .muted{color:var(--muted);font-size:13px}
+  svg text{fill:var(--muted);font-size:11px}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--muted)}
+  .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--c);margin-right:5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Mutui e Prestiti</h1>
+  <div class="row">
+    <button id="btnNew">+ Nuovo finanziamento</button>
+    <button class="sec" id="btnAll">Aggiorna mese (tutti)</button>
+    <button class="sec" id="btnCsv">Esporta CSV</button>
+    <button class="sec" id="btnBak">Backup</button>
+    <label class="btn sec" style="background:var(--acc2);color:var(--acc)">Ripristina<input type="file" id="fileImp" accept=".json" hidden></label>
+  </div>
+</header>
+
+<main>
+  <section class="card kpis" id="kpis"></section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between"><strong>Andamento debito residuo</strong><div class="legend" id="legend"></div></div>
+    <div id="chart"></div>
+  </section>
+
+  <section class="card scroll">
+    <strong>Finanziamenti</strong>
+    <table id="tLoans"></table>
+  </section>
+
+  <section class="card scroll" id="secStorico"></section>
+  <p class="muted">I dati restano solo in questo browser (localStorage). Fai un <b>Backup</b> ogni tanto: il file .json si ripristina con “Ripristina”.</p>
+</main>
+
+<!-- Dialog finanziamento -->
+<dialog id="dLoan">
+  <form method="dialog" class="grid" id="fLoan">
+    <strong class="full" id="dLoanTitle">Nuovo finanziamento</strong>
+    <label class="full">Nome<input name="nome" required placeholder="es. Mutuo casa"></label>
+    <label>Tipo<select name="tipo"><option>Mutuo</option><option>Prestito</option><option>Auto</option><option>Altro</option></select></label>
+    <label>Importo iniziale (€)<input name="importo" type="number" step="0.01" min="0" required></label>
+    <label>TAN annuo (%)<input name="tan" type="number" step="0.001" min="0" required></label>
+    <label>Durata (mesi)<input name="mesi" type="number" min="1" required></label>
+    <label>Mese prima rata<input name="inizio" type="month" required></label>
+    <label>Rata (€) <span class="muted">vuoto = calcolata</span><input name="rata" type="number" step="0.01" min="0"></label>
+    <div class="full row" style="justify-content:flex-end">
+      <button class="sec" value="cancel" formnovalidate>Annulla</button><button value="ok">Salva</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Dialog aggiornamento mensile -->
+<dialog id="dUpd">
+  <form method="dialog" class="grid" id="fUpd">
+    <strong class="full" id="dUpdTitle">Aggiorna residuo</strong>
+    <label>Mese<input name="mese" type="month" required></label>
+    <label>Debito residuo (€)<input name="residuo" type="number" step="0.01" min="0" required></label>
+    <label>Rata pagata (€)<input name="rata" type="number" step="0.01" min="0"></label>
+    <label>Estinzione parziale (€)<input name="extra" type="number" step="0.01" min="0"></label>
+    <label class="full">Note<input name="note"></label>
+    <p class="full muted" id="updHint"></p>
+    <div class="full row" style="justify-content:flex-end">
+      <button class="sec" value="cancel" formnovalidate>Annulla</button><button value="ok">Salva</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const KEY = 'mutuiPrestiti.v1';
+const COLORS = ['#1f77b4','#e8743b','#19a979','#945ecf','#d64e7a','#8a8f2b','#13a4b4'];
+const eur = n => (n ?? 0).toLocaleString('it-IT',{style:'currency',currency:'EUR',useGrouping:'always'});
+const $ = s => document.querySelector(s);
+
+let db = load();
+let selected = null;
+
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)) || {loans:[]}; }catch{ return {loans:[]}; } }
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(db)); }catch(e){ alert('Salvataggio non riuscito: '+e.message); } render(); }
+
+// --- utilità mesi "YYYY-MM"
+const ym = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+const thisMonth = () => ym(new Date());
+const addM = (m,k) => { const [y,mo]=m.split('-').map(Number); return ym(new Date(y,mo-1+k,1)); };
+const diffM = (a,b) => { const [y1,m1]=a.split('-').map(Number), [y2,m2]=b.split('-').map(Number); return (y2-y1)*12+(m2-m1); };
+const fmtM = m => { const [y,mo]=m.split('-').map(Number); return new Date(y,mo-1,1).toLocaleDateString('it-IT',{month:'short',year:'numeric'}); };
+
+// --- matematica ammortamento francese
+const iM = l => l.tan/1200;
+function rataTeorica(l){
+  if (l.rata) return +l.rata;
+  const i=iM(l), n=+l.mesi, P=+l.importo;
+  return i===0 ? P/n : P*i/(1-Math.pow(1+i,-n));
+}
+// residuo dopo k rate partendo da P
+function resDopo(P,i,R,k){ return i===0 ? Math.max(0,P-R*k) : Math.max(0, P*Math.pow(1+i,k) - R*(Math.pow(1+i,k)-1)/i); }
+// rata pagata nel mese m => residuo teorico a fine mese m
+function residuoTeorico(l,m){
+  const k = Math.min(Math.max(diffM(l.inizio,m)+1,0), +l.mesi);
+  return resDopo(+l.importo, iM(l), rataTeorica(l), k);
+}
+function ultimaReg(l){ return [...(l.reg||[])].sort((a,b)=>a.mese<b.mese?-1:1).pop(); }
+// residuo attuale: ultima registrazione, proiettata al mese corrente se più vecchia
+function residuoAl(l,m){
+  const u = (l.reg||[]).filter(x=>x.mese<=m).sort((a,b)=>a.mese<b.mese?-1:1).pop();
+  if (!u) return residuoTeorico(l,m);
+  return resDopo(u.residuo, iM(l), rataTeorica(l), diffM(u.mese,m));
+}
+// mesi rimanenti dal residuo attuale
+function mesiRimanenti(l){
+  let r = residuoAl(l,thisMonth()), i=iM(l), R=rataTeorica(l), k=0;
+  if (R<=r*i) return Infinity;
+  while (r>0.005 && k<1200){ r = r*(1+i)-R; k++; }
+  return k;
+}
+
+// --- render
+function render(){
+  const m = thisMonth();
+  const L = db.loans;
+  const totRes = L.reduce((s,l)=>s+residuoAl(l,m),0);
+  const totIni = L.reduce((s,l)=>s+ +l.importo,0);
+  const totRata = L.filter(l=>residuoAl(l,m)>0.005).reduce((s,l)=>s+rataTeorica(l),0);
+  const fine = L.length ? L.map(l=>addM(m,mesiRimanenti(l))).sort().pop() : null;
+  const daAgg = L.filter(l=>{const u=ultimaReg(l); return !u || u.mese<m;}).length;
+
+  $('#kpis').innerHTML = `
+    <div class="kpi"><div class="l">Debito residuo totale</div><div class="v">${eur(totRes)}</div></div>
+    <div class="kpi"><div class="l">Rate mensili totali</div><div class="v">${eur(totRata)}</div></div>
+    <div class="kpi"><div class="l">Rimborsato</div><div class="v">${totIni?Math.round((1-totRes/totIni)*100):0}%</div></div>
+    <div class="kpi"><div class="l">Ultima rata prevista</div><div class="v">${fine&&!fine.includes('NaN')?fmtM(fine):'—'}</div></div>
+    <div class="kpi"><div class="l">Da aggiornare (${fmtM(m)})</div><div class="v ${daAgg?'warn':''}">${daAgg}</div></div>`;
+
+  $('#tLoans').innerHTML = `<tr><th>Nome</th><th>Tipo</th><th>Importo</th><th>TAN</th><th>Rata</th><th>Residuo</th><th>Avanz.</th><th>Mesi rim.</th><th>Ultimo agg.</th><th></th></tr>` +
+    (L.length? L.map((l,ix)=>{
+      const r=residuoAl(l,m), u=ultimaReg(l), p=Math.min(100,Math.max(0,(1-r/l.importo)*100)), mr=mesiRimanenti(l);
+      return `<tr>
+        <td><span style="color:${COLORS[ix%COLORS.length]}">●</span> <button class="link" onclick="sel('${l.id}')">${esc(l.nome)}</button></td>
+        <td><span class="tag">${l.tipo}</span></td>
+        <td>${eur(+l.importo)}</td><td>${(+l.tan).toLocaleString('it-IT')}%</td><td>${eur(rataTeorica(l))}</td>
+        <td><b>${eur(r)}</b></td>
+        <td><div class="bar" title="${p.toFixed(1)}%"><i style="width:${p}%"></i></div></td>
+        <td>${mr===Infinity?'∞':mr}</td>
+        <td class="${!u||u.mese<m?'warn':''}">${u?fmtM(u.mese):'mai'}</td>
+        <td><button class="sec" onclick="openUpd('${l.id}')">Aggiorna</button>
+            <button class="link" onclick="openLoan('${l.id}')">Modifica</button>
+            <button class="del" onclick="delLoan('${l.id}')">✕</button></td></tr>`;
+    }).join('') : `<tr><td colspan="10" class="muted">Nessun finanziamento: clicca “+ Nuovo finanziamento”.</td></tr>`);
+
+  renderStorico(); renderChart();
+}
+
+function renderStorico(){
+  const l = db.loans.find(x=>x.id===selected);
+  if (!l){ $('#secStorico').innerHTML = `<span class="muted">Clicca sul nome di un finanziamento per vederne lo storico mensile.</span>`; return; }
+  const reg=[...(l.reg||[])].sort((a,b)=>a.mese<b.mese?1:-1);
+  $('#secStorico').innerHTML = `<div class="row" style="justify-content:space-between"><strong>Storico — ${esc(l.nome)}</strong><button class="sec" onclick="openUpd('${l.id}')">+ Registra mese</button></div>
+  <table><tr><th>Mese</th><th>Residuo reale</th><th>Residuo da piano</th><th>Scostamento</th><th>Rata pagata</th><th>Estinz. parziale</th><th>Note</th><th></th></tr>
+  ${reg.length?reg.map(r=>{const t=residuoTeorico(l,r.mese), d=r.residuo-t;
+    return `<tr><td>${fmtM(r.mese)}</td><td>${eur(r.residuo)}</td><td>${eur(t)}</td><td class="${Math.abs(d)>1?'warn':''}">${eur(d)}</td>
+    <td>${r.rata!=null?eur(r.rata):''}</td><td>${r.extra?eur(r.extra):''}</td><td style="text-align:left">${esc(r.note||'')}</td>
+    <td><button class="del" onclick="delReg('${l.id}','${r.mese}')">✕</button></td></tr>`}).join('')
+   :`<tr><td colspan="8" class="muted">Nessuna registrazione.</td></tr>`}</table>`;
+}
+
+function renderChart(){
+  const L=db.loans, el=$('#chart');
+  if(!L.length){ el.innerHTML='<p class="muted">Il grafico apparirà dopo aver inserito un finanziamento.</p>'; $('#legend').innerHTML=''; return; }
+  const start = L.map(l=>addM(l.inizio,-1)).sort()[0];
+  const end = L.map(l=>addM(thisMonth(),Math.min(mesiRimanenti(l),600))).sort().pop();
+  const N = diffM(start,end)+1;
+  const series = L.map(l=>{ const pts=[]; for(let k=0;k<N;k++){ const mm=addM(start,k); pts.push(mm<addM(l.inizio,-1)?0:(mm<=thisMonth()? valStor(l,mm) : residuoAl(l,mm))); } return pts; });
+  const tot = Array.from({length:N},(_,k)=>series.reduce((s,a)=>s+a[k],0));
+  const W=1000,H=260,pl=70,pb=24,pt=10, max=Math.max(...tot)*1.05||1;
+  const x=k=>pl+(W-pl-10)*k/Math.max(1,N-1), y=v=>pt+(H-pt-pb)*(1-v/max);
+  const path=a=>a.map((v,k)=>(k?'L':'M')+x(k).toFixed(1)+','+y(v).toFixed(1)).join('');
+  const kNow=diffM(start,thisMonth());
+  let g='';
+  for(let t=0;t<=4;t++){const v=max*t/4; g+=`<line x1="${pl}" x2="${W-10}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end">${Math.round(v/1000).toLocaleString('it-IT')}k</text>`;}
+  const step=Math.max(1,Math.ceil(N/8)); for(let k=0;k<N;k+=step) g+=`<text x="${x(k)}" y="${H-6}" text-anchor="middle">${fmtM(addM(start,k))}</text>`;
+  if(kNow>=0&&kNow<N) g+=`<line x1="${x(kNow)}" x2="${x(kNow)}" y1="${pt}" y2="${H-pb}" stroke="var(--muted)" stroke-dasharray="4 4"/><text x="${x(kNow)+4}" y="${pt+10}">oggi</text>`;
+  g+=series.map((s,i)=>`<path d="${path(s)}" fill="none" stroke="${COLORS[i%COLORS.length]}" stroke-width="2"/>`).join('');
+  if(L.length>1) g+=`<path d="${path(tot)}" fill="none" stroke="var(--ink)" stroke-width="2.5"/>`;
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Debito residuo nel tempo">${g}</svg>`;
+  $('#legend').innerHTML = L.map((l,i)=>`<span style="--c:${COLORS[i%COLORS.length]}">${esc(l.nome)}</span>`).join('')+(L.length>1?`<span style="--c:var(--ink)">Totale</span>`:'');
+}
+// valore storico: registrazione se presente, altrimenti piano
+function valStor(l,m){ const r=(l.reg||[]).find(x=>x.mese===m); if(r) return r.residuo; return m<l.inizio? +l.importo : residuoAl(l,m); }
+
+// --- azioni
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let editId=null, updId=null;
+
+function openLoan(id){
+  editId=id||null; const f=$('#fLoan'); f.reset();
+  $('#dLoanTitle').textContent = id?'Modifica finanziamento':'Nuovo finanziamento';
+  if(id){ const l=db.loans.find(x=>x.id===id); for(const k of ['nome','tipo','importo','tan','mesi','inizio','rata']) f[k].value=l[k]??''; }
+  else f.inizio.value=thisMonth();
+  $('#dLoan').showModal();
+}
+$('#dLoan').addEventListener('close',()=>{
+  if($('#dLoan').returnValue!=='ok') return;
+  const f=$('#fLoan'), o={nome:f.nome.value.trim(),tipo:f.tipo.value,importo:+f.importo.value,tan:+f.tan.value,mesi:+f.mesi.value,inizio:f.inizio.value,rata:f.rata.value?+f.rata.value:null};
+  if(editId) Object.assign(db.loans.find(x=>x.id===editId),o); else db.loans.push({id:uid(),reg:[],...o});
+  save();
+});
+function delLoan(id){ const l=db.loans.find(x=>x.id===id); if(confirm(`Eliminare "${l.nome}" e tutto il suo storico?`)){ db.loans=db.loans.filter(x=>x.id!==id); if(selected===id) selected=null; save(); } }
+function sel(id){ selected=id; renderStorico(); $('#secStorico').scrollIntoView({behavior:'smooth'}); }
+
+function openUpd(id){
+  updId=id; const l=db.loans.find(x=>x.id===id), f=$('#fUpd'); f.reset();
+  const m=thisMonth(); f.mese.value=m;
+  const ex=(l.reg||[]).find(r=>r.mese===m);
+  f.residuo.value=(ex?ex.residuo:residuoAl(l,m)).toFixed(2);
+  f.rata.value=(ex?.rata ?? rataTeorica(l)).toFixed(2); f.extra.value=ex?.extra||''; f.note.value=ex?.note||'';
+  $('#dUpdTitle').textContent='Aggiorna residuo — '+l.nome;
+  $('#updHint').textContent='Valore proposto calcolato dal piano. Correggilo con quello dell’estratto conto della banca se diverso.';
+  $('#dUpd').showModal();
+}
+$('#fUpd').mese.addEventListener('change',e=>{ const l=db.loans.find(x=>x.id===updId); const ex=(l.reg||[]).find(r=>r.mese===e.target.value); $('#fUpd').residuo.value=(ex?ex.residuo:residuoAl(l,e.target.value)).toFixed(2); });
+$('#dUpd').addEventListener('close',()=>{
+  if($('#dUpd').returnValue!=='ok') return;
+  const f=$('#fUpd'), l=db.loans.find(x=>x.id===updId);
+  l.reg=(l.reg||[]).filter(r=>r.mese!==f.mese.value);
+  l.reg.push({mese:f.mese.value,residuo:+f.residuo.value,rata:f.rata.value?+f.rata.value:null,extra:f.extra.value?+f.extra.value:0,note:f.note.value});
+  selected=l.id; save();
+});
+function delReg(id,m){ const l=db.loans.find(x=>x.id===id); if(confirm('Eliminare la registrazione di '+fmtM(m)+'?')){ l.reg=l.reg.filter(r=>r.mese!==m); save(); } }
+
+$('#btnNew').onclick=()=>openLoan();
+$('#btnAll').onclick=()=>{
+  const m=thisMonth(); const todo=db.loans.filter(l=>!(l.reg||[]).some(r=>r.mese===m));
+  if(!todo.length) return alert('Tutti i finanziamenti sono già aggiornati per '+fmtM(m)+'.');
+  if(!confirm(`Registrare per ${fmtM(m)} il residuo da piano su ${todo.length} finanziamenti?\n(Poi puoi correggere i singoli valori.)`)) return;
+  todo.forEach(l=>{ l.reg=l.reg||[]; l.reg.push({mese:m,residuo:+residuoAl(l,m).toFixed(2),rata:+rataTeorica(l).toFixed(2),extra:0,note:'auto'}); });
+  save();
+};
+function download(name,text,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+$('#btnBak').onclick=()=>download(`mutui-prestiti-backup-${thisMonth()}.json`,JSON.stringify(db,null,2),'application/json');
+$('#btnCsv').onclick=()=>{
+  const n=v=>v==null||v===''?'':String((+v).toFixed(2)).replace('.',',');
+  const rows=[['Finanziamento','Tipo','Mese','Residuo reale','Residuo da piano','Rata pagata','Estinzione parziale','Note']];
+  db.loans.forEach(l=>[...(l.reg||[])].sort((a,b)=>a.mese<b.mese?-1:1).forEach(r=>rows.push([l.nome,l.tipo,r.mese,n(r.residuo),n(residuoTeorico(l,r.mese)),n(r.rata),n(r.extra),r.note||''])));
+  download(`mutui-prestiti-${thisMonth()}.csv`,'﻿'+rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\r\n'),'text/csv');
+};
+$('#fileImp').onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{ const d=JSON.parse(await f.text()); if(!Array.isArray(d.loans)) throw new Error('formato non valido');
+    if(confirm('Sostituire i dati attuali con quelli del backup?')){ db=d; save(); } }
+  catch(err){ alert('Impossibile leggere il backup: '+err.message); }
+  e.target.value='';
+};
+
+render();
+</script>
+</body>
+</html>
